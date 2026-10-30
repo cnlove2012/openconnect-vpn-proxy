@@ -28,6 +28,9 @@ unset env(VPN_PASSWORD)
 set cmd [list \
     openconnect \
     --protocol=anyconnect \
+    --useragent=AnyConnect\ Linux_64\ 5.1.2.42 \
+    --version-string=5.1.2.42 \
+    --no-dtls \
     --interface=tun0 \
     --user=$vpn_user \
     --script=/usr/share/vpnc-scripts/vpnc-script \
@@ -40,9 +43,10 @@ if {$vpn_group ne ""} {
 
 lappend cmd $vpn_gateway
 
-puts "Starting OpenConnect..."
+puts "Starting Cisco AnyConnect VPN..."
 puts "Gateway: $vpn_gateway"
-puts "Auth Group: $vpn_group"
+puts "Group: $vpn_group"
+puts "Client: AnyConnect Linux_64 5.1.2.42"
 
 spawn -noecho {*}$cmd
 
@@ -79,7 +83,7 @@ expect {
         exp_continue
     }
 
-    # 明确等待手机 SMS OTP
+    # 明确等待手机 SMS
     -re {(?i)(SMS Code|verification code|one[- ]time password|OTP|passcode)[^\r\n]*:} {
         if {$otp_sent} {
             puts stderr "\nOTP requested again. Stop authentication."
@@ -88,9 +92,22 @@ expect {
             exit 11
         }
 
-        send_user "\n请输入手机 App 当前显示的六位验证码: "
+        send_user "\n请输入短信验证码: "
 
-        expect_user -re {([^\r\n]+)\r?\n}
+        # 关闭终端输入回显
+        stty -echo
+
+        set input_result [catch {
+            expect_user -re {([0-9]{6})\r?\n}
+        }]
+
+        # 恢复终端回显
+        stty echo
+
+        if {$input_result != 0} {
+            puts stderr "\nFailed to read OTP."
+            exit 12
+        }
 
         set otp $expect_out(1,string)
 
@@ -104,15 +121,14 @@ expect {
     }
 
     # VPN 建立成功
-    -re {(?i)Connected as} {
-        puts "\nVPN connected successfully."
-        puts "Keep the container running."
+       -re {(?i)(Connected as|Configured as)} {
+       puts "\nVPN connected successfully."
 
-        expect eof
+       expect eof
 
-        set result [wait]
-        exit [lindex $result 3]
-    }
+       set result [wait]
+       exit [lindex $result 3]
+   }
 
     eof {
         set result [wait]
