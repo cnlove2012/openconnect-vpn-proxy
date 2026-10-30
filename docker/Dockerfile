@@ -14,6 +14,7 @@ RUN apt-get update \
         ca-certificates \
         curl \
         expect \
+        procps \
     && rm -rf /var/lib/apt/lists/*
 
 COPY tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
