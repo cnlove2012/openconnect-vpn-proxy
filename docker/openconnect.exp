@@ -25,14 +25,17 @@ if {[info exists env(VPN_AUTHGROUP)]} {
 unset env(VPN_PASSWORD)
 
 # 构建命令
+# 客户 VPN 网关需要兼容 Cisco AnyConnect 客户端标识。
+# 使用经过实际验证的 User-Agent 和版本号。
+# 这两个参数已在当前客户环境中验证可以完成 MFA 认证。
 set cmd [list \
     openconnect \
     --protocol=anyconnect \
-    --useragent=AnyConnect\ Linux_64\ 5.1.2.42 \
-    --version-string=5.1.2.42 \
+    "--useragent=AnyConnect Linux_64 5.1.2.42" \
+    "--version-string=5.1.2.42" \
     --no-dtls \
     --interface=tun0 \
-    --user=$vpn_user \
+    "--user=$vpn_user" \
     --script=/usr/share/vpnc-scripts/vpnc-script \
     --reconnect-timeout=300 \
 ]
@@ -49,23 +52,32 @@ puts "Group: $vpn_group"
 puts "Client: AnyConnect Linux_64 5.1.2.42"
 
 spawn -noecho {*}$cmd
+set oc_pid [exp_pid]
+
+# docker stop 时优雅退出 openconnect
+trap {
+    catch {exec /usr/bin/kill -TERM $oc_pid}
+    catch {wait}
+    exit 0
+} {SIGTERM SIGINT}
 
 set password_sent 0
 set otp_sent 0
 
 expect {
-
-    # 认证失败：不再自动循环输入密码
+    # 注意：expect 按模式在列表中的顺序匹配，而不是按输出位置。
+    # 所以 "Login failed" 必须放在 "Password:" 之前，
+    # 否则验证码错误时会被 Password: 抢先匹配。
     -re {(?i)(login failed|authentication failed|authentication rejected)} {
-        puts stderr "\nVPN authentication failed."
-        puts stderr "Automatic retry has been stopped."
-
+        puts stderr "\nVPN login failed."
+        puts stderr "Check username/password, or the SMS code was wrong/expired."
+        puts stderr "Auth Group: $vpn_group"
         catch {close}
         catch {wait}
         exit 21
     }
 
-    # 自动输入 .env 密码
+    # 自动输入密码（只会输入一次，防止循环重试）
     -re {(?i)Password:} {
         if {$password_sent} {
             puts stderr "\nPassword requested again. Stop to prevent retry loop."
@@ -75,7 +87,6 @@ expect {
         }
 
         send -- "$vpn_password\r"
-
         set vpn_password ""
         set password_sent 1
 
@@ -83,52 +94,38 @@ expect {
         exp_continue
     }
 
-    # 明确等待手机 SMS
-    -re {(?i)(SMS Code|verification code|one[- ]time password|OTP|passcode)[^\r\n]*:} {
+    # 短信验证码。只匹配英文提示：服务端会连续输出中文和英文两行，
+    # 如果两行都匹配，第二行会被误判为"验证码被再次要求"。
+    -re {(?i)Please input SMS Code:} {
         if {$otp_sent} {
-            puts stderr "\nOTP requested again. Stop authentication."
+            puts stderr "\nSMS code requested again. Stop authentication."
             catch {close}
             catch {wait}
             exit 11
         }
 
-        send_user "\n请输入短信验证码: "
+        send_user "\n请输入【短信】收到的验证码（尽快输入，会过期）: "
 
-        # 关闭终端输入回显
-        stty -echo
-
-        set input_result [catch {
-            expect_user -re {([0-9]{6})\r?\n}
-        }]
-
-        # 恢复终端回显
-        stty echo
-
-        if {$input_result != 0} {
-            puts stderr "\nFailed to read OTP."
-            exit 12
-        }
-
-        set otp $expect_out(1,string)
+        expect_user -re {([^\r\n]+)\r?\n}
+        set otp [string trim $expect_out(1,string)]
 
         send -- "$otp\r"
         set otp ""
-
         set otp_sent 1
 
-        puts "\nOTP submitted. Waiting for server response..."
+        puts "\nSMS code submitted. Waiting for server response..."
         exp_continue
     }
 
-    # VPN 建立成功
-       -re {(?i)(Connected as|Configured as)} {
-       puts "\nVPN connected successfully."
+    # VPN 建立成功（兼容两种输出）
+    -re {(?i)(Connected as|Configured as)} {
+        puts "\nVPN connected successfully."
+        puts "Keep the container running."
 
-       expect eof
-
-       set result [wait]
-       exit [lindex $result 3]
-   }
+        expect eof
+        set result [wait]
+        exit [lindex $result 3]
+    }
 
     eof {
         set result [wait]
