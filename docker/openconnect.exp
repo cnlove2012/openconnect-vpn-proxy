@@ -1,0 +1,121 @@
+#!/usr/bin/expect -f
+
+set timeout -1
+log_user 1
+encoding system utf-8
+
+# 检查环境变量
+foreach key {VPN_USER VPN_PASSWORD VPN_GATEWAY} {
+    if {![info exists env($key)] || $env($key) eq ""} {
+        puts stderr "ERROR: $key is required"
+        exit 1
+    }
+}
+
+set vpn_user $env(VPN_USER)
+set vpn_password $env(VPN_PASSWORD)
+set vpn_gateway $env(VPN_GATEWAY)
+
+set vpn_group ""
+if {[info exists env(VPN_AUTHGROUP)]} {
+    set vpn_group $env(VPN_AUTHGROUP)
+}
+
+# 避免密码传递给 OpenConnect 子进程
+unset env(VPN_PASSWORD)
+
+# 构建命令
+set cmd [list \
+    openconnect \
+    --protocol=anyconnect \
+    --interface=tun0 \
+    --user=$vpn_user \
+    --script=/usr/share/vpnc-scripts/vpnc-script \
+    --reconnect-timeout=300 \
+]
+
+if {$vpn_group ne ""} {
+    lappend cmd "--authgroup=$vpn_group"
+}
+
+lappend cmd $vpn_gateway
+
+puts "Starting OpenConnect..."
+puts "Gateway: $vpn_gateway"
+puts "Auth Group: $vpn_group"
+
+spawn -noecho {*}$cmd
+
+set password_sent 0
+set otp_sent 0
+
+expect {
+
+    # 认证失败：不再自动循环输入密码
+    -re {(?i)(login failed|authentication failed|authentication rejected)} {
+        puts stderr "\nVPN authentication failed."
+        puts stderr "Automatic retry has been stopped."
+
+        catch {close}
+        catch {wait}
+        exit 21
+    }
+
+    # 自动输入 .env 密码
+    -re {(?i)Password:} {
+        if {$password_sent} {
+            puts stderr "\nPassword requested again. Stop to prevent retry loop."
+            catch {close}
+            catch {wait}
+            exit 10
+        }
+
+        send -- "$vpn_password\r"
+
+        set vpn_password ""
+        set password_sent 1
+
+        puts "\nPassword submitted."
+        exp_continue
+    }
+
+    # 明确等待手机 SMS OTP
+    -re {(?i)(SMS Code|verification code|one[- ]time password|OTP|passcode)[^\r\n]*:} {
+        if {$otp_sent} {
+            puts stderr "\nOTP requested again. Stop authentication."
+            catch {close}
+            catch {wait}
+            exit 11
+        }
+
+        send_user "\n请输入手机 App 当前显示的六位验证码: "
+
+        expect_user -re {([^\r\n]+)\r?\n}
+
+        set otp $expect_out(1,string)
+
+        send -- "$otp\r"
+        set otp ""
+
+        set otp_sent 1
+
+        puts "\nOTP submitted. Waiting for server response..."
+        exp_continue
+    }
+
+    # VPN 建立成功
+    -re {(?i)Connected as} {
+        puts "\nVPN connected successfully."
+        puts "Keep the container running."
+
+        expect eof
+
+        set result [wait]
+        exit [lindex $result 3]
+    }
+
+    eof {
+        set result [wait]
+        exit [lindex $result 3]
+    }
+}

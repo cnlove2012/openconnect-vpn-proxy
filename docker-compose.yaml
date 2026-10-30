@@ -1,0 +1,27 @@
+name: miaoti-vpn-proxy
+services:
+  vpn-proxy:
+    build:
+      context: ./docker
+    image: miaoti-vpn-proxy:latest
+    container_name: customer-vpn-proxy
+
+    cap_add:
+      - NET_ADMIN
+
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+    ports:
+      - "127.0.0.1:8888:8888"
+
+    stdin_open: true
+    tty: true
+
+    environment:
+      VPN_GATEWAY: ${VPN_GATEWAY:?VPN_GATEWAY is required}
+      VPN_USER: ${VPN_USER:?VPN_USER is required}
+      VPN_PASSWORD: ${VPN_PASSWORD:?VPN_PASSWORD is required}
+      VPN_AUTHGROUP: ${VPN_AUTHGROUP-duanxin}
+
+    restart: "no"
