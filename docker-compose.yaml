@@ -1,27 +1,63 @@
-name: miaoti-vpn-proxy
+name: customer-vpn-proxy
 services:
+  # ------------------------------------------------------------
+  # Cisco AnyConnect-compatible VPN + HTTP/HTTPS forward proxy
+  # ------------------------------------------------------------
   vpn-proxy:
+    image: customer-vpn-proxy:latest
     build:
       context: ./docker
-    image: miaoti-vpn-proxy:latest
+      dockerfile: Dockerfile
     container_name: customer-vpn-proxy
 
     cap_add:
       - NET_ADMIN
-
     devices:
       - /dev/net/tun:/dev/net/tun
 
     ports:
       - "127.0.0.1:8888:8888"
 
+    # OpenConnect/Expect needs an interactive TTY for the SMS OTP.
     stdin_open: true
     tty: true
+    init: true
+    stop_grace_period: 15s
+    restart: "no"
 
     environment:
-      VPN_GATEWAY: ${VPN_GATEWAY:?VPN_GATEWAY is required}
-      VPN_USER: ${VPN_USER:?VPN_USER is required}
-      VPN_PASSWORD: ${VPN_PASSWORD:?VPN_PASSWORD is required}
-      VPN_AUTHGROUP: ${VPN_AUTHGROUP-duanxin}
+      VPN_GATEWAY: ${VPN_GATEWAY:-https://sslvpn.sankuai.com}
+      VPN_USER: ${VPN_USER:?Set VPN_USER in .env}
+      VPN_PASSWORD: ${VPN_PASSWORD:?Set VPN_PASSWORD in .env}
+      VPN_AUTHGROUP: ${VPN_AUTHGROUP:-duanxin}
+      VPN_USERAGENT: ${VPN_USERAGENT:-AnyConnect Linux_64 5.1.2.42}
+      VPN_VERSION_STRING: ${VPN_VERSION_STRING:-5.1.2.42}
+      VPN_RECONNECT_TIMEOUT: ${VPN_RECONNECT_TIMEOUT:-300}
 
-    restart: "no"
+    expose:
+      - "8888"
+
+    networks:
+      vpn-net:
+        aliases:
+          - customer-vpn-proxy
+
+    # This only checks that the VPN interface has an IPv4 address.
+    # It does not prove that the customer API/DNS is reachable.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - ip -4 -o addr show dev tun0 2>/dev/null | grep -q 'inet '
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+
+networks:
+  vpn-net:
+    driver: bridge
+    name: vpn-net
+  # 如果要加入别的网络/别的docker compose 里的网络
+  # vpn-net:
+  #   external: true
+  #   name: <替换成要加入的网络的名称>
