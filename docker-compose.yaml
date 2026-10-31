@@ -1,14 +1,14 @@
-name: customer-vpn-proxy
+name: openconnect-vpn-proxy
 services:
   # ------------------------------------------------------------
   # Cisco AnyConnect-compatible VPN + HTTP/HTTPS forward proxy
   # ------------------------------------------------------------
   vpn-proxy:
-    image: customer-vpn-proxy:latest
+    image: cnlove2012/openconnect-vpn-proxy:latest
     build:
       context: ./docker
       dockerfile: Dockerfile
-    container_name: customer-vpn-proxy
+    container_name: vpn-proxy
 
     cap_add:
       - NET_ADMIN
@@ -38,9 +38,9 @@ services:
       - "8888"
 
     networks:
-      vpn-net:
+      vpn-proxy-net:
         aliases:
-          - customer-vpn-proxy
+          - openconnect-vpn-proxy
 
     # This only checks that the VPN interface has an IPv4 address.
     # It does not prove that the customer API/DNS is reachable.
@@ -54,10 +54,10 @@ services:
       start_period: 20s
 
 networks:
-  vpn-net:
+  vpn-proxy-net:
     driver: bridge
-    name: vpn-net
+    name: vpn-proxy-net
   # 如果要加入别的网络/别的docker compose 里的网络
-  # vpn-net:
+  # vpn-proxy-net:
   #   external: true
   #   name: <替换成要加入的网络的名称>
