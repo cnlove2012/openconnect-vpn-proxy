@@ -1,5 +1,6 @@
 #!/usr/bin/expect -f
 
+# Expect is Tcl plus interactive-process control commands.
 set timeout -1
 log_user 1
 encoding system utf-8
@@ -15,13 +16,25 @@ foreach key {VPN_USER VPN_PASSWORD VPN_GATEWAY} {
 set vpn_user $env(VPN_USER)
 set vpn_password $env(VPN_PASSWORD)
 set vpn_gateway $env(VPN_GATEWAY)
-
+set vpn_useragent "AnyConnect Linux_64 5.1.2.42"
+set vpn_version "5.1.2.42"
+set reconnect_timeout "300"
 set vpn_group ""
-if {[info exists env(VPN_AUTHGROUP)]} {
+if {[info exists env(VPN_AUTHGROUP)] && $env(VPN_AUTHGROUP) ne ""} {
     set vpn_group $env(VPN_AUTHGROUP)
+}
+if {[info exists env(VPN_USERAGENT)] && $env(VPN_USERAGENT) ne ""} {
+    set vpn_useragent $env(VPN_USERAGENT)
+}
+if {[info exists env(VPN_VERSION_STRING)] && $env(VPN_VERSION_STRING) ne ""} {
+    set vpn_version $env(VPN_VERSION_STRING)
+}
+if {[info exists env(VPN_RECONNECT_TIMEOUT)] && $env(VPN_RECONNECT_TIMEOUT) ne ""} {
+    set reconnect_timeout $env(VPN_RECONNECT_TIMEOUT)
 }
 
 # 避免密码传递给 OpenConnect 子进程
+# Keep the password in the Expect process; do not pass it to the OpenConnect child process as an environment variable.
 unset env(VPN_PASSWORD)
 
 # 构建命令
@@ -31,30 +44,30 @@ unset env(VPN_PASSWORD)
 set cmd [list \
     openconnect \
     --protocol=anyconnect \
-    "--useragent=AnyConnect Linux_64 5.1.2.42" \
-    "--version-string=5.1.2.42" \
+    "--useragent=$vpn_useragent" \
+    "--version-string=$vpn_version" \
     --no-dtls \
     --interface=tun0 \
     "--user=$vpn_user" \
+    "--authgroup=$vpn_group" \
     --script=/usr/share/vpnc-scripts/vpnc-script \
-    --reconnect-timeout=300 \
+    "--reconnect-timeout=$reconnect_timeout" \
+    $vpn_gateway \
 ]
 
-if {$vpn_group ne ""} {
-    lappend cmd "--authgroup=$vpn_group"
-}
-
-lappend cmd $vpn_gateway
-
-puts "Starting Cisco AnyConnect VPN..."
+puts "Starting Cisco AnyConnect-compatible VPN..."
 puts "Gateway: $vpn_gateway"
-puts "Group: $vpn_group"
-puts "Client: AnyConnect Linux_64 5.1.2.42"
+puts "Group Alias: $vpn_group"
+puts "Client User-Agent: $vpn_useragent"
+puts "Client Version: $vpn_version"
+puts "DTLS: disabled (TLS/CSTP only for this test environment)"
 
 spawn -noecho {*}$cmd
 set oc_pid [exp_pid]
 
 # docker stop 时优雅退出 openconnect
+# Docker stop sends SIGTERM to PID 1 (Expect, through init when enabled).
+# Forward it to OpenConnect and let the container stop cleanly.
 trap {
     catch {exec /usr/bin/kill -TERM $oc_pid}
     catch {wait}
@@ -94,8 +107,8 @@ expect {
         exp_continue
     }
 
-    # 短信验证码。只匹配英文提示：服务端会连续输出中文和英文两行，
-    # 如果两行都匹配，第二行会被误判为"验证码被再次要求"。
+    # 短信验证码。只匹配英文提示：服务端会连续输出中文和英文两行，如果两行都匹配，第二行会被误判为"验证码被再次要求"。
+    # The gateway displays Chinese and English prompts. Match the English line only to avoid treating both lines as two separate OTP challenges.
     -re {(?i)Please input SMS Code:} {
         if {$otp_sent} {
             puts stderr "\nSMS code requested again. Stop authentication."
@@ -105,7 +118,6 @@ expect {
         }
 
         send_user "\n请输入【短信】收到的验证码（尽快输入，会过期）: "
-
         expect_user -re {([^\r\n]+)\r?\n}
         set otp [string trim $expect_out(1,string)]
 
