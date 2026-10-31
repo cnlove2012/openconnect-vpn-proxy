@@ -21,7 +21,7 @@ Swoft  --HTTP proxy-->  Tinyproxy  --VPN/TUN-->  客户内网 API
 以下信息来自当前客户环境的实际测试，其他 VPN 环境不能直接照搬：
 
 | 项目 | 当前测试值 |
-|---|---|
+| --- | --- |
 | VPN Gateway | `https://sslvpn.sankuai.com` |
 | Group Alias | `duanxin` |
 | Tunnel Group / Connection Profile 映射 | `DefaultWEBVPNGroup => duanxin` |
@@ -71,6 +71,8 @@ DefaultWEBVPNGroup => duanxin
 
 当前脚本 **不使用 `stty -echo`** 。在本项目的 Mac Docker Desktop、`docker attach` 和 Expect 组合中，关闭终端回显曾导致 OTP 输入/认证流程异常；因此保留已验证可用的终端输入方式。输入 OTP 时终端可能显示验证码，不要分享包含验证码的终端日志。
 
+脚本按行读取输入，`string trim` 后原样提交，不强制六位数字格式（曾试过硬性 `[0-9]{6}` 匹配，同样因交互异常回退）。OTP 提示只匹配英文行 `Please input SMS Code:`——服务端会连发中英文两行，两行都匹配会把第二行误判为「验证码被再次要求」而直接退出。
+
 ### 2.4 初始 HTTP 404、DTLS 和 vhost-net 提示
 
 测试中曾看到：
@@ -88,14 +90,16 @@ DefaultWEBVPNGroup => duanxin
 
 ### 3.1 单 Compose：Swoft 与 VPN 代理在同一个 Docker 网络
 
+> 本仓库的 `docker-compose.yaml` 只包含 `vpn-proxy` 服务；下图是目标形态——Swoft（业务容器）由业务侧项目提供，并加入同一个 Docker 网络。
+
 ```text
                          Docker Host (Linux test server)
 ┌──────────────────────────────────────────────────────────────────┐
 │                                                                  │
-│  app-net                 vpn-net                                 │
+│  app-net                 vpn-proxy-net                           │
 │  ┌──────────────┐        ┌──────────────────────────────────┐     │
 │  │              │        │                                  │     │
-│  │    Swoft     ├────────┤  customer-vpn-proxy               │     │
+│  │    Swoft     ├────────┤  vpn-proxy                        │     │
 │  │              │  HTTP  │  ┌──────────────┐                  │     │
 │  │ CUSTOMER_    │ proxy  │  │ Tinyproxy    │ :8888            │     │
 │  │ PROXY         ├────────►  └──────┬───────┘                  │     │
@@ -119,30 +123,29 @@ DefaultWEBVPNGroup => duanxin
 容器内代理地址：
 
 ```text
-http://customer-vpn-proxy:8888
-```
-
-Compose 也可以通过服务名 `vpn-proxy` 访问：
-
-```text
 http://vpn-proxy:8888
 ```
+
+在 `vpn-proxy-net` 网络内，以下名字都能通过 Docker DNS 解析到代理容器，任选其一：
+
+- `vpn-proxy`：容器名（`container_name`），同时是 Compose 服务名；
+- `openconnect-vpn-proxy`：网络别名（`networks.vpn-proxy-net.aliases`）。
 
 ### 3.2 各组件职责
 
 | 组件 | 职责 |
-|---|---|
+| --- | --- |
 | `vpn-proxy` | 容器化运行 OpenConnect 与 Tinyproxy |
 | OpenConnect | 连接客户 Cisco AnyConnect 兼容 VPN，创建 `tun0` 并配置路由 |
 | Tinyproxy | 提供 HTTP/HTTPS 正向代理，监听容器内 `8888` |
 | `swoft` | 访问客户内网 Token API，并在请求级别指定代理 |
-| `vpn-net` | 只连接需要访问 VPN 代理的业务容器 |
+| `vpn-proxy-net` | 只连接需要访问 VPN 代理的业务容器 |
 | `app-net` | Swoft 与其普通业务依赖使用的网络，可按现有项目扩展 |
 
 ## 4. 目录结构
 
 ```text
-customer-vpn-swoft-demo/
+miaoti-vpn-proxy/
 ├── README.md
 ├── docker-compose.yaml
 ├── .env.example
@@ -154,7 +157,7 @@ customer-vpn-swoft-demo/
     └── tinyproxy.conf
 ```
 
-`docker/` 是 VPN 代理镜像的构建上下文。将 `vpn-proxy` 服务复制到其他 Compose 项目时，也需要把 `docker/` 目录复制过去，或者先构建并推送 `customer-vpn-proxy` 镜像，再把 `build` 改为对应的 `image`。
+`docker/` 是 VPN 代理镜像的构建上下文。将 `vpn-proxy` 服务复制到其他 Compose 项目时，也需要把 `docker/` 目录复制过去，或者先构建并推送 `cnlove2012/openconnect-vpn-proxy` 镜像，再把 `build` 改为对应的 `image`。
 
 ## 5. 配置与启动
 
@@ -196,7 +199,7 @@ docker compose up -d vpn-proxy
 进入交互终端：
 
 ```bash
-docker attach customer-vpn-proxy
+docker attach vpn-proxy
 ```
 
 Expect 会自动提交 `.env` 中的 VPN 密码；看到短信验证码提示后，在终端输入手机上的六位验证码。
@@ -224,48 +227,53 @@ Ctrl + P，然后 Ctrl + Q
 docker compose ps
 
 # VPN TUN 地址
-docker exec customer-vpn-proxy ip -4 addr show tun0
+docker exec vpn-proxy ip -4 addr show tun0
 
 # 路由表
-docker exec customer-vpn-proxy ip route
+docker exec vpn-proxy ip route
 
 # 检查某个客户内网 IP 的路由出口
-docker exec customer-vpn-proxy ip route get <客户内网IP>
+docker exec vpn-proxy ip route get <客户内网IP>
+
+# 从 VPN 容器 ping 客户内网目标（镜像已安装 iputils-ping）
+docker exec vpn-proxy ping -c 3 <客户内网IP>
 
 # Tinyproxy 监听端口
-docker exec customer-vpn-proxy ss -lnt
+docker exec vpn-proxy ss -lnt
 
 # Tinyproxy 请求日志
-docker exec customer-vpn-proxy tail -f /tmp/tinyproxy.log
+docker exec vpn-proxy tail -f /tmp/tinyproxy.log
 ```
 
 Compose healthcheck 只检查 `tun0` 是否获得 IPv4 地址，不代表客户 API、端口或 DNS 一定可达。
 
-### 5.5 启动 Swoft
+### 5.5 启动 Swoft（业务侧项目）
 
-VPN 认证成功后：
+VPN 认证成功后，在 **Swoft 所在的业务 Compose 项目**中启动（本仓库的 compose 文件里没有 `swoft` 服务，`docker compose up -d swoft` 在本仓库目录下执行会报「no such service」）：
 
 ```bash
+# 在业务侧 Compose 项目目录执行
 docker compose up -d swoft
 ```
 
-Swoft 容器会收到：
+Swoft 容器需要注入：
 
 ```text
-CUSTOMER_PROXY=http://customer-vpn-proxy:8888
+CUSTOMER_PROXY=http://vpn-proxy:8888
 ```
 
-## 6. 完整 Compose 示例
+## 6. Compose 关键配置
 
-项目根目录的 `compose.yaml` 包含 `vpn-proxy` 和 `swoft` 两个服务。关键配置如下：
+项目根目录的 `docker-compose.yaml` **只包含 `vpn-proxy` 一个服务**；Swoft 服务在业务侧项目中配置（见第 9、10 节）。关键配置如下：
 
 ```yaml
 services:
   vpn-proxy:
-    image: customer-vpn-proxy:local
+    image: cnlove2012/openconnect-vpn-proxy:latest
     build:
       context: ./docker
-    container_name: customer-vpn-proxy
+      dockerfile: Dockerfile
+    container_name: vpn-proxy
     cap_add:
       - NET_ADMIN
     devices:
@@ -273,28 +281,39 @@ services:
     stdin_open: true
     tty: true
     init: true
+    stop_grace_period: 15s
     restart: "no"
     environment:
-      VPN_GATEWAY: ${VPN_GATEWAY}
-      VPN_USER: ${VPN_USER}
-      VPN_PASSWORD: ${VPN_PASSWORD}
+      VPN_GATEWAY: ${VPN_GATEWAY:-https://sslvpn.sankuai.com}
+      VPN_USER: ${VPN_USER:?Set VPN_USER in .env}
+      VPN_PASSWORD: ${VPN_PASSWORD:?Set VPN_PASSWORD in .env}
       VPN_AUTHGROUP: ${VPN_AUTHGROUP:-duanxin}
       VPN_USERAGENT: ${VPN_USERAGENT:-AnyConnect Linux_64 5.1.2.42}
       VPN_VERSION_STRING: ${VPN_VERSION_STRING:-5.1.2.42}
+      VPN_RECONNECT_TIMEOUT: ${VPN_RECONNECT_TIMEOUT:-300}
     # 本机 curl 测试时保留。
     ports:
       - "127.0.0.1:8888:8888"
     networks:
-      vpn-net:
+      vpn-proxy-net:
         aliases:
-          - customer-vpn-proxy
+          - openconnect-vpn-proxy
+    # 仅检查 tun0 是否获得 IPv4，不证明客户 API/DNS 可达。
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - ip -4 -o addr show dev tun0 2>/dev/null | grep -q 'inet '
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
 
 networks:
-  vpn-net:
+  vpn-proxy-net:
     driver: bridge
-    name: vpn-net
+    name: vpn-proxy-net
   # 如果要加入别的网络/别的docker compose 里的网络
-  # vpn-net:
+  # vpn-proxy-net:
   #   external: true
   #   name: <替换成要加入的网络的名称>
 ```
@@ -304,7 +323,7 @@ networks:
 ### Mac 与 Linux 的 ports 差异
 
 - **Mac Docker Desktop 本机手动 curl**：保留 `127.0.0.1:8888:8888`，在 Mac 上访问 `http://127.0.0.1:8888`。
-- **Linux 测试服务器**：删除整个 `ports:` 块。Swoft 通过 `vpn-net` 使用 `http://customer-vpn-proxy:8888`，不需要开放宿主机端口。
+- **Linux 测试服务器**：删除整个 `ports:` 块。Swoft 通过 `vpn-proxy-net` 使用 `http://vpn-proxy:8888`，不需要开放宿主机端口。
 - 不要使用 `0.0.0.0:8888:8888` 或 `8888:8888` 将无认证代理公开到服务器网卡或公网。
 
 ## 7. Swoft 如何通过代理刷新客户 Token
@@ -426,15 +445,15 @@ $response = $client->post(getenv('CUSTOMER_TOKEN_URL'), [
 先确认 Swoft 与代理容器在同一网络：
 
 ```bash
-docker exec customer-swoft getent hosts customer-vpn-proxy
+docker exec swoft getent hosts vpn-proxy
 ```
 
 从 Swoft 容器测试客户 API：
 
 ```bash
-docker exec customer-swoft \
+docker exec swoft \
   curl -v \
-  -x http://customer-vpn-proxy:8888 \
+  -x http://vpn-proxy:8888 \
   https://客户内网域名/health
 ```
 
@@ -443,12 +462,12 @@ docker exec customer-swoft \
 同时在代理容器观察 Tinyproxy 日志：
 
 ```bash
-docker exec customer-vpn-proxy tail -f /tmp/tinyproxy.log
+docker exec vpn-proxy tail -f /tmp/tinyproxy.log
 ```
 
 排查判断：
 
-- **Tinyproxy 日志没有请求**：Swoft 到代理的网络/DNS/地址有问题；检查两个容器是否在同一 `vpn-net`、代理地址是否写成 `customer-vpn-proxy:8888`。
+- **Tinyproxy 日志没有请求**：Swoft 到代理的网络/DNS/地址有问题；检查两个容器是否在同一 `vpn-proxy-net`、代理地址是否写成 `vpn-proxy:8888`。
 - **日志有请求，但返回 502/超时**：Swoft 已经到达代理，继续检查 VPN 是否已认证、客户目标路由、内部 DNS、目标端口和客户防火墙。
 - **通过 IP 成功，域名失败**：检查客户 VPN 下发的内部 DNS。通过 HTTP 代理访问域名时，通常由代理端解析目标域名；不要在 Swoft 代码里提前将客户内网域名解析成错误的公网 IP。
 - **HTTP CONNECT 成功但 TLS 失败**：检查目标服务证书链和客户内部 CA。
@@ -460,7 +479,7 @@ docker exec customer-vpn-proxy tail -f /tmp/tinyproxy.log
 ### 9.1 只创建一次共享网络
 
 ```bash
-docker network create vpn-net
+docker network create vpn-proxy-net
 ```
 
 ### 9.2 VPN 代理 Compose
@@ -471,16 +490,16 @@ VPN 代理服务连接外部网络，并添加 DNS alias：
 services:
   vpn-proxy:
     # 其余 build、cap_add、devices、environment 等配置与主 compose 相同
-    container_name: customer-vpn-proxy
+    container_name: vpn-proxy
     networks:
-      vpn-net:
+      vpn-proxy-net:
         aliases:
-          - customer-vpn-proxy
+          - openconnect-vpn-proxy
 
 networks:
-  vpn-net:
+  vpn-proxy-net:
     driver: bridge
-    name: vpn-net
+    name: vpn-proxy-net
 ```
 
 ### 9.3 Swoft Compose
@@ -490,15 +509,15 @@ services:
   swoft:
     image: ${SWOFT_IMAGE}
     environment:
-      CUSTOMER_PROXY: http://customer-vpn-proxy:8888
+      CUSTOMER_PROXY: http://vpn-proxy:8888
     networks:
       - default
-      - vpn-net
+      - vpn-proxy-net
 
 networks:
-  vpn-net:
+  vpn-proxy-net:
     external: true
-    name: vpn-net
+    name: vpn-proxy-net
 ```
 
 分开 Compose 时，不能通过 `depends_on` 引用另一个 Compose 项目中的服务。Swoft 应用需要对 VPN 尚未连接/代理暂不可用的情况做重试或明确报错。
@@ -508,9 +527,9 @@ networks:
 实际接入现有测试环境时：
 
 1. 将主 `compose.yaml` 中的 `vpn-proxy` 服务段复制到测试环境的 Compose 文件。
-2. 同时复制 `docker/` 构建目录，或使用已构建并推送到镜像仓库的 `customer-vpn-proxy` 镜像。
-3. 将 Swoft 服务加入同一个 `vpn-net`。
-4. 为 Swoft 设置 `CUSTOMER_PROXY=http://customer-vpn-proxy:8888`。
+2. 同时复制 `docker/` 构建目录，或使用已构建并推送到镜像仓库的 `cnlove2012/openconnect-vpn-proxy` 镜像。
+3. 将 Swoft 服务加入同一个 `vpn-proxy-net`。
+4. 为 Swoft 设置 `CUSTOMER_PROXY=http://vpn-proxy:8888`。
 5. Linux 测试服务器上删除 VPN 服务的 `ports:` 块，不发布 `8888` 到宿主机。
 6. 设置服务器本地 `.env` 或 Docker Secrets，完成 VPN 用户名和密码配置。
 7. 先启动并人工完成 VPN OTP 认证，再启动/调用 Swoft Token 刷新流程。
@@ -529,8 +548,9 @@ devices:
 ## 11. 启动顺序、可用性与重连
 
 - `depends_on` 只保证服务启动顺序，不代表人工输入 OTP 已完成，也不代表 VPN 内网路由或客户 API 已经可用。
-- 本项目建议先执行 `docker compose up -d vpn-proxy`，然后 `docker attach customer-vpn-proxy` 完成认证，确认 TUN 与路由正常后再启动 Swoft。
-- `--reconnect-timeout=300` 用于 OpenConnect 进程存活期间尝试恢复短暂网络中断；不代表容器被删除或进程退出后可以免 OTP 恢复。
+- 本项目建议先执行 `docker compose up -d vpn-proxy`，然后 `docker attach vpn-proxy` 完成认证，确认 TUN 与路由正常后再启动 Swoft。
+- `docker stop` 停止容器时，Compose（`init: true` + `stop_grace_period: 15s`）先把 SIGTERM 发给 PID 1；Expect 脚本里的 trap 会把信号转发给 OpenConnect 子进程并等待其退出，从而优雅拆除隧道，而不是硬杀进程留下半开连接。
+- `--reconnect-timeout=300`（可用 `VPN_RECONNECT_TIMEOUT` 覆盖）用于 OpenConnect 进程存活期间尝试恢复短暂网络中断；不代表容器被删除或进程退出后可以免 OTP 恢复。
 - VPN 会话过期、服务端撤销会话、容器重建或宿主机重启后，通常需要重新启动容器并输入密码及短信验证码。
 - Swoft 的 Token 刷新逻辑应设置连接超时、总超时、有限次数重试和退避策略。VPN 不可用时应返回可观测的依赖故障，不要无限重试客户接口。
 
@@ -544,20 +564,20 @@ docker compose build vpn-proxy
 docker compose up -d vpn-proxy
 
 # 进入 OTP 交互
-docker attach customer-vpn-proxy
+docker attach vpn-proxy
 
 # 查看状态
 docker compose ps
 
 # 查看 OpenConnect / Tinyproxy 容器日志
-docker logs -f customer-vpn-proxy
+docker logs -f vpn-proxy
 
 # 查看 Tinyproxy 访问日志
-docker exec customer-vpn-proxy tail -f /tmp/tinyproxy.log
+docker exec vpn-proxy tail -f /tmp/tinyproxy.log
 
 # 查看 TUN 和路由
-docker exec customer-vpn-proxy ip addr show tun0
-docker exec customer-vpn-proxy ip route
+docker exec vpn-proxy ip addr show tun0
+docker exec vpn-proxy ip route
 
 # VPN 认证成功后启动 Swoft
 docker compose up -d swoft
@@ -598,10 +618,10 @@ Tinyproxy 会降权到 `nobody` 用户。当前配置将日志写入 `/tmp/tinyp
 Mac 的 `127.0.0.1:8888` 是宿主机发布端口；Swoft 容器不能把自己的 `127.0.0.1` 当作代理地址。Swoft 必须使用 Docker 网络地址：
 
 ```text
-http://customer-vpn-proxy:8888
+http://vpn-proxy:8888
 ```
 
-同时确认 Swoft 和 VPN 代理加入了同一个 `vpn-net`。
+同时确认 Swoft 和 VPN 代理加入了同一个 `vpn-proxy-net`。
 
 ### 13.6 Tinyproxy 日志有请求，但客户 API 超时
 
@@ -610,7 +630,7 @@ http://customer-vpn-proxy:8888
 ## 14. 安全注意事项
 
 - 仅在客户明确授权范围内使用 VPN 和访问客户内网。
-- 代理不配置用户名/密码认证；安全边界依赖 Docker 网络。因此只将授权业务容器连接到 `vpn-net`。
+- 代理不配置用户名/密码认证；安全边界依赖 Docker 网络。因此只将授权业务容器连接到 `vpn-proxy-net`。
 - Linux 测试服务器不要将 Tinyproxy 端口发布到公网或 `0.0.0.0`。业务容器通过内部 Docker 网络访问即可。
 - Mac 本机调试时只绑定 `127.0.0.1:8888`，不要改成 `0.0.0.0:8888`。
 - `.env` 包含 VPN 用户名和密码，必须加入 `.gitignore` 并限制文件权限。Docker 管理员仍可能通过容器配置查看环境变量；生产环境优先采用 Docker Secrets 或受控凭据注入。
