@@ -20,6 +20,7 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 | `.cnb/settings.yml` | 「push 到 main 自动打 Tag」开关（settings-tag.md，版本格式平台定）。**保留**（2026-11-01 用户裁决：避免平台侧麻烦、后续云原生开发用得上）；平台打的 tag 若 v 开头会经 `"v*"` 触发构建 |
 | `.cnb/scripts/calver.sh` | CalVer 版本计算：`年.周.build`（ISO 周 `%G.%V`，UTC；`%G` 是 ISO 周基年，跨年周不能用 `%Y`），版本来源 git tag |
 | `.cnb/scripts/docker-build.sh` | `resolve-tag \| from-tag \| build \| push \| release` 五段式；上下文 `docker/`；release 用 buildx 多平台（默认 `linux/amd64,linux/arm64`，`--provenance=false`，qemu 交叉构建）一次构建直接推 manifest；状态经 `${CNB_BUILD_WORKSPACE}/.cnb-image.env` 落盘跨 stage 共享 |
+| `docker-build-push.sh`（仓库根） | 本地构建并推 Docker Hub，**tag 与 CNB 同号**：默认取 git 最新 tag（`v2026.44.1`→`2026.44.1`）；`--tag VER` 指定版本发布（配 `--check` 只比对），不带值的 `--tag` = 比对模式（`--check` 同义）；`--latest`/`--no-latest` 控制 latest；`--base-version 年.周` 按周自增（仅 git 无 CalVer tag 且未 `--tag VER` 时生效，否则提示被忽略）；`--platform` 默认 `linux/amd64,linux/arm64`（与 CI 同平台，单平台走 load+push）；绝不本地打 tag；重推已有版本 tag 会覆盖 Hub 同名 tag（宽松语义，与 CI 的版本不可变不同）；凭据不归脚本管（只粗判 `~/.docker/config.json` 有没有登录，不读 `DOCKERHUB_TOKEN`） |
 | `.cnb/scripts/git-tag.sh` | 把 CalVer 版本打成附注 tag 推送；附注末尾机器可读标记 `cnb-image:`/`cnb-latest:`（开关随 tag 传递）；已有 tag / 提交已被打 tag 时跳过；push 失败重查远端做并发兜底（绝不 force） |
 
 ### 版本与发布机制（2026-11-01 裁决，取代旧「已知不一致」段）
@@ -62,4 +63,5 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 - 本地跑容器：`docker compose up -d vpn-proxy` → `docker attach vpn-proxy` 输入短信验证码 → `Ctrl+P`/`Ctrl+Q` 退出（`Ctrl+C` 会杀隧道）
 - `calver.sh` 本地可直接执行（`CNB_BRANCH` 为空时自动跳过 fetch tags）：`sh .cnb/scripts/calver.sh next`
 - 本地验多平台构建：起 `registry:2` 容器 + `docker buildx create --driver docker-container --config`（registry 配 http=true），再 `CNB_DOCKER_REGISTRY=host.docker.internal:5000 IMAGE_REPO=x IMAGE_TAG=y sh .cnb/scripts/docker-build.sh release`，`docker manifest inspect --insecure` 验双架构
+- 本地同步 Docker Hub：`./docker-build-push.sh --tag` 先比对 git 最新 tag 与 Docker Hub 最新版本 tag，再 `./docker-build-push.sh` 发布（同号镜像 tag + latest）；Docker Hub 侧读 `hub.docker.com/v2` 公开 API，无需认证。本地脚本用 bash（`#!/usr/bin/env bash`、`set -euo pipefail`）；必须保持 POSIX sh 的只有 CI 侧 `.cnb/scripts/`（docker:28-cli 无 bash），两边约束不同、别互相照搬
 - `.env.example` 是占位模板；真实 `.env` 永不入库

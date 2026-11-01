@@ -150,6 +150,7 @@ miaoti-vpn-proxy/
 ├── docker-compose.yaml
 ├── .env.example
 ├── .gitignore
+├── docker-build-push.sh   # 本地构建并推送 Docker Hub（tag 与 CNB 一致）
 └── docker/
     ├── Dockerfile
     ├── entrypoint.sh
@@ -585,6 +586,40 @@ docker compose up -d swoft
 # 停止并删除容器（下次启动需要重新认证）
 docker compose down
 ```
+
+### 12.1 本地同步镜像到 Docker Hub
+
+CNB 流水线发布的 tag 是 CalVer `v年.周.build`，镜像 tag 去 `v`。根目录 `docker-build-push.sh` 复用同一套版本规则，让本地推上去的镜像与 CNB 的 tag 对得上：
+
+```bash
+# 比对：git 最新 tag 与 Docker Hub 最新版本 tag（只读，不构建）
+./docker-build-push.sh --tag
+
+# 发布：按 git 最新 tag 构建并推送「版本 tag + latest」（默认 amd64+arm64）
+./docker-build-push.sh
+
+# 只推版本 tag，不动 latest
+./docker-build-push.sh --no-latest
+
+# 手动指定版本发布（git 还没有该 tag 时的临时发版）；只比对该版本则加 --check
+./docker-build-push.sh --tag v2026.45.2
+./docker-build-push.sh --tag v2026.45.2 --check
+
+# 按某周自增（仅当 git 无任何 CalVer tag 时生效，否则会提示被忽略）
+./docker-build-push.sh --base-version 2026.45
+
+# 本机单架构、换个仓库、跳过确认
+./docker-build-push.sh --platform linux/amd64 --repo yourname/openconnect-vpn-proxy --yes
+```
+
+规则要点：
+
+- 版本默认取 **git 最新 tag**（`v2026.44.1` → 镜像 `2026.44.1`），与 CNB 完全同号；`--tag VER` 手动指定优先；本地没有 tag 时才按 `年.周.build` 自增（`--base-version` 只在这一档生效）。
+- 本地 tag 可能落后于远端：比对前先 `git fetch --tags --force`，否则「一致」可能只是旧结论。
+- 脚本**不替你打 git tag**，只发布「git 已有的版本」（`--tag VER` 指定的版本除外）；也不在多平台间拼装 manifest，而是像 CI 一样用 buildx 一次构建推送。
+- 重推已有版本 tag 会**覆盖** Docker Hub 上的同名 tag——与 CNB 侧「版本号不重复使用」的不可变语义不同，本地通道是宽松语义，补发/纠错靠自己判断。
+- `--tag` 读 Docker Hub 的公开 API，仓库不存在或只有 `latest` 时会明确说「无正式版本 tag」；网络查询失败时也会明确说「查询失败」，不与「尚未发布」混淆。
+- 凭据不归脚本管：本地 `docker login` 一次即可（凭据由 docker 存在 `~/.docker/config.json`），脚本只粗判有没有登录，没有就提示先 login。不读任何令牌环境变量——谁登录就推谁的仓库，换账号只需重新 login。
 
 ## 13. 常见问题
 
