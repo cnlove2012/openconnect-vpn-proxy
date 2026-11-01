@@ -1,0 +1,52 @@
+# =====================================================================
+# CNB 云原生构建 —— 三条流水线
+#
+#   ① main:  auto_tag            Tag 列表页「自动生成 Tag」按钮 → 打 CalVer tag
+#   ② main:  web_trigger_release main 详情页「发布新版本」按钮（按钮见 .cnb/web_trigger.yml）
+#   ③ "v*":  tag_push            v 开头的 tag 推送 → 多平台构建推镜像（唯一构建入口）
+#
+# 硬规则（docs.cnb.cool/zh/build/trigger-rule.md）：
+#   - auto_tag 必须挂默认分支（main）名下；自定义 stages 取代默认 git-auto-tag 插件
+#   - tag_push 按「tag 名」匹配顶层 glob：tag 名（如 v2026.44.1）匹配不到 main，
+#     故挂 "v*"——不用 $ 兜底且更收敛：只有 v 开头的 tag 才构建，杂牌 tag 不跑 CI
+#   - 本文件合入 main 后 ①②③ 才可用（①② 的按钮配置读默认分支的 .cnb.yml）
+#   - 推 tag 必触发 tag_push，「不打镜像 / 不打 latest」的意愿只能写入 tag 附注随 tag 传递
+# =====================================================================
+
+main:
+  # ① Tag 列表页「自动生成 Tag」按钮 → 打 CalVer 附注 tag
+  auto_tag:
+    - name: 自动打 Tag（v年.周.build）
+      # ②的 stage 与本条完全相同，用锚点收敛（单文件内锚点/别名合法）
+      stages: &release-stages
+        - name: 计算 CalVer 版本并写状态文件
+          script: bash .cnb/scripts/docker-build.sh resolve-tag
+        - name: 打附注 Tag 并推送
+          # ②场景下 SKIP_IMAGE/NO_LATEST 由按钮注入为环境变量，脚本转写进 tag 附注
+          script: bash .cnb/scripts/git-tag.sh
+
+  # ② main 详情页「发布新版本」按钮 → 同①，开关随附注传递
+  web_trigger_release:
+    - name: 手动发布（开关写入 Tag 附注）
+      stages: *release-stages
+
+# ③ v 开头的 tag 推送 → 多平台构建并推送（tag 名匹配 v* glob，与 main 平级）
+"v*":
+  tag_push:
+    - name: 发布镜像（amd64+arm64）
+      # amd64 节点（默认 8 核）：amd64 层原生构建，arm64 层经 qemu 模拟（见 release 子命令）
+      runner:
+        tags: cnb:arch:amd64
+      # 显式声明构建容器：不写则用平台缺省镜像 cnbcool/default-build-env，
+      # 但缺省镜像不保证带 buildx（docker CLI 有了 buildx 才有多平台能力）
+      docker:
+        image: docker:28-cli
+      services:
+        - docker
+      stages:
+        - name: 解析 Tag 附注
+          script: bash .cnb/scripts/docker-build.sh from-tag
+        - name: 登录制品库
+          script: docker login ${CNB_DOCKER_REGISTRY} -u ${CNB_TOKEN_USER_NAME} -p ${CNB_TOKEN}
+        - name: 多平台构建并推送
+          script: bash .cnb/scripts/docker-build.sh release

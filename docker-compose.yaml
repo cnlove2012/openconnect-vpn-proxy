@@ -26,10 +26,10 @@ services:
     restart: "no"
 
     environment:
-      VPN_GATEWAY: ${VPN_GATEWAY:-https://sslvpn.sankuai.com}
+      VPN_GATEWAY: ${VPN_GATEWAY:?Set VPN_GATEWAY in .env}
       VPN_USER: ${VPN_USER:?Set VPN_USER in .env}
       VPN_PASSWORD: ${VPN_PASSWORD:?Set VPN_PASSWORD in .env}
-      VPN_AUTHGROUP: ${VPN_AUTHGROUP:-duanxin}
+      VPN_AUTHGROUP: ${VPN_AUTHGROUP:?Set VPN_AUTHGROUP in .env}
       VPN_USERAGENT: ${VPN_USERAGENT:-AnyConnect Linux_64 5.1.2.42}
       VPN_VERSION_STRING: ${VPN_VERSION_STRING:-5.1.2.42}
       VPN_RECONNECT_TIMEOUT: ${VPN_RECONNECT_TIMEOUT:-300}

@@ -1,3 +1,5 @@
 .env
+# docker-build.sh 跨 stage 共享的状态文件（本地实跑脚本也会生成）
+.cnb-image.env
 *.log
 .DS_Store
