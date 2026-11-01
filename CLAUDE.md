@@ -15,7 +15,7 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 
 | 文件 | 职责 |
 |---|---|
-| `.cnb.yml` | 三条流水线：`main: auto_tag`（Tag 列表页按钮→打 CalVer tag）、`main: web_trigger_release`（main 详情页按钮→同前，stages 用 YAML 锚点与 auto_tag 共用）、`"v*": tag_push`（v 开头 tag 推送→多平台构建推镜像，**唯一构建入口**，runner 钉 `cnb:arch:amd64`，`docker.image` 钉 `docker:28-cli`——缺省镜像不保证带 buildx；28-cli 带 git/buildx 但不带 bash，由 stage 内 `apk add bash` 补） |
+| `.cnb.yml` | 三条流水线：`main: auto_tag`（Tag 列表页按钮→打 CalVer tag）、`main: web_trigger_release`（main 详情页按钮→同前，stages 用 YAML 锚点与 auto_tag 共用）、`"v*": tag_push`（v 开头 tag 推送→多平台构建推镜像，**唯一构建入口**，runner 钉 `cnb:arch:amd64`，`docker.image` 钉 `docker:28-cli`——缺省镜像不保证带 buildx；该镜像 Alpine 无 bash，脚本须 `sh` 调用且保持 POSIX，见下） |
 | `.cnb/web_trigger.yml` | main 详情页「发布新版本」按钮：event=`web_trigger_release`、开关仅 `NO_LATEST`（与 git-tag.sh 读的环境变量严格同名；SKIP_IMAGE 已于 2026-11-01 从按钮移除，机制保留供手动场景）、权限 owner/master |
 | `.cnb/settings.yml` | 「push 到 main 自动打 Tag」开关（settings-tag.md，版本格式平台定）。**保留**（2026-11-01 用户裁决：避免平台侧麻烦、后续云原生开发用得上）；平台打的 tag 若 v 开头会经 `"v*"` 触发构建 |
 | `.cnb/scripts/calver.sh` | CalVer 版本计算：`年.周.build`（ISO 周 `%G.%V`，UTC；`%G` 是 ISO 周基年，跨年周不能用 `%Y`），版本来源 git tag |
@@ -43,6 +43,8 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 - 常用内置变量（全部只读）：`CNB_BRANCH`（分支或 Tag 名）、`CNB_COMMIT(_SHORT)`、`CNB_EVENT`、`CNB_DEFAULT_BRANCH`、`CNB_REPO_SLUG_LOWERCASE`、`CNB_REPO_URL_HTTPS`、`CNB_DOCKER_REGISTRY`、`CNB_TOKEN`、`CNB_TOKEN_USER_NAME`、`CNB_BUILD_WEB_URL`、`CNB_PIPELINE_KEY/STATUS`。
 - `services: [docker]` 的 dind 已自动 `docker login` 到 `${CNB_DOCKER_REGISTRY}`，`.cnb.yml` 里的显式 `docker login` 是幂等兜底，不要删（手工在云原生开发里跑同一脚本要靠它）。
 - tag 附注解析（`from-tag`）用 `sed` 而非 `grep | awk`：管道里的外部程序会把 `$` 再展开一次，而附注里就写着 `- 提交：${CNB_COMMIT}`——`CNB_COMMIT` 在 fork 出来的仓库里可控，提交内容带换行 + 标记样的一行就能伪造 `cnb-image: skip` 静默跳过发布。
+- `.cnb/scripts/` 脚本一律 `sh` 调用、且必须保持 POSIX sh 语法：`tag_push` 的 `docker.image: docker:28-cli` 基于 Alpine，**没有 bash**（写 `bash xxx.sh` 会 `sh: bash: not found`、退出码 127），`[[ ]]`、`local`、数组、`<<<`、`=~` 都不能用（构建 `cnb-t83-1k6aq9lh5` 曾因此 127，见 auto/ci-sh-15fb / #3）。
+- 不换 Debian 系镜像的原因：官方 `docker` 镜像里 Debian 系的只有 `28-dind`，它自带 dockerd，会与 `services: [docker]` 的 daemon 打架；`-cli` 线只有 Alpine。想用 bash 只有两条路——`apk add --no-cache bash`，或自建镜像。当前三个脚本只用到 git/printf/sed/grep/tr/date 等基础工具，不值得为此加依赖。
 - stage 间传值：`exports:` 从 stage 的 `exports`/`result` 对象取（脚本内用 `##[set-output k=v]` 输出）；CNB 环境变量无法从子进程回传，跨 stage 大块数据用落盘文件（见 docker-build.sh 的 `.cnb-image.env`）。
 
 ### 参考文档（markdown 直链，可整篇抓取）
@@ -56,6 +58,6 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 ## 本地开发
 
 - 本地跑容器：`docker compose up -d vpn-proxy` → `docker attach vpn-proxy` 输入短信验证码 → `Ctrl+P`/`Ctrl+Q` 退出（`Ctrl+C` 会杀隧道）
-- `calver.sh` 本地可直接执行（`CNB_BRANCH` 为空时自动跳过 fetch tags）：`bash .cnb/scripts/calver.sh next`
-- 本地验多平台构建：起 `registry:2` 容器 + `docker buildx create --driver docker-container --config`（registry 配 http=true），再 `CNB_DOCKER_REGISTRY=host.docker.internal:5000 IMAGE_REPO=x IMAGE_TAG=y bash .cnb/scripts/docker-build.sh release`，`docker manifest inspect --insecure` 验双架构
+- `calver.sh` 本地可直接执行（`CNB_BRANCH` 为空时自动跳过 fetch tags）：`sh .cnb/scripts/calver.sh next`
+- 本地验多平台构建：起 `registry:2` 容器 + `docker buildx create --driver docker-container --config`（registry 配 http=true），再 `CNB_DOCKER_REGISTRY=host.docker.internal:5000 IMAGE_REPO=x IMAGE_TAG=y sh .cnb/scripts/docker-build.sh release`，`docker manifest inspect --insecure` 验双架构
 - `.env.example` 是占位模板；真实 `.env` 永不入库

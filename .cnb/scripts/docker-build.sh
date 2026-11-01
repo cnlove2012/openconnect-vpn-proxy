@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # CNB 流水线用的镜像构建脚本
 #
 # 用法：docker-build.sh <resolve-tag | from-tag | build | push | release>
@@ -19,9 +19,11 @@
 #   SKIP_BUILD   "true" 时 build/push/release 跳过（from-tag 按 tag 附注 cnb-image: skip 设置）
 #   PUSH_LATEST  "false" 时不推 latest（from-tag 按附注 cnb-latest: skip 或非 CalVer tag 设置）
 #   PUSH_IMAGE   "false" 时 push 只验证不推送（本地手动用；release 必须推送）
-set -euo pipefail
+# 镜像约束：跑在 .cnb.yml 的 docker.image=docker:*-cli（Alpine，无 bash）里，
+# 故必须 `sh script.sh` 调用，且不能用 [[ ]]、local、数组、<<<、=~ 等 bash 扩展
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 IMAGE_REPO="${IMAGE_REPO:-${CNB_REPO_SLUG_LOWERCASE:?缺少 IMAGE_REPO 或 CNB_REPO_SLUG_LOWERCASE}}"
 DOCKERFILE="${DOCKERFILE:-docker/Dockerfile}"
@@ -30,7 +32,7 @@ PUSH_IMAGE="${PUSH_IMAGE:-true}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
 PUSH_LATEST="${PUSH_LATEST:-true}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
-PLATFORMS="${PLATFORMS//[[:space:]]/}"  # 容错：剥掉平台列表里的空格
+PLATFORMS="$(printf '%s' "$PLATFORMS" | tr -d '[:space:]')"  # 容错：剥掉平台列表里的空格
 # 落盘共享：CNB 环境变量无法从子进程回传，后续 stage 靠这个文件拿到同一组值
 STATE_FILE="${CNB_BUILD_WORKSPACE:-.}/.cnb-image.env"
 
@@ -43,7 +45,7 @@ derive_refs() {
 
 resolve_tag() {
   # 版本计算只发生在这里（打 tag 管线）；tag_push 场景走 from-tag，绝不重算 next
-  IMAGE_TAG="${IMAGE_TAG:-$(bash "${SCRIPT_DIR}/calver.sh" next)}"
+  IMAGE_TAG="${IMAGE_TAG:-$(sh "${SCRIPT_DIR}/calver.sh" next)}"
   derive_refs
 
   # 工作区必须干净：镜像打的是构建时的文件快照，而 tag 只记录提交。
@@ -67,10 +69,21 @@ resolve_tag() {
 # 「不打镜像 / 不打 latest」的开关只能随 tag 附注传递（推 tag 必触发 tag_push）
 from_tag() {
   : "${CNB_BRANCH:?from-tag 需在 tag_push 事件下运行（CNB_BRANCH=tag 名）}"
-  local tag="$CNB_BRANCH" msg="" image_marker="" latest_marker
+  tag="$CNB_BRANCH" msg="" image_marker="" latest_marker=""
   # tag 名会被拼进镜像引用，先收口字符集，防 `]` / 空格之类把 tag 参数顶出去
-  if ! [[ "$tag" =~ ^v?[A-Za-z0-9._-]{1,100}$ ]]; then
-    echo "错误：tag 名 ${tag} 含非法字符，拒绝构建" >&2
+  case "$tag" in
+    v*) tag_body="${tag#v}" ;;
+    *)  tag_body="$tag" ;;
+  esac
+  # 长度与字符集一起校验：只允许 v?[A-Za-z0-9._-]{1,100}
+  case "$tag_body" in
+    ""|*[!A-Za-z0-9._-]*)
+      echo "错误：tag 名 ${tag} 含非法字符，拒绝构建" >&2
+      exit 1
+      ;;
+  esac
+  if [ "${#tag_body}" -gt 100 ]; then
+    echo "错误：tag 名 ${tag} 过长（上限 100 字符，不含 v 前缀），拒绝构建" >&2
     exit 1
   fi
 
@@ -97,9 +110,12 @@ from_tag() {
   if [ "$latest_marker" = "skip" ]; then PUSH_LATEST=false; fi
 
   # 镜像 tag = tag 名去 v（仅 v+数字 开头才去，防 version-x 之类被误剥）
-  if [[ "$tag" =~ ^v[0-9] ]]; then IMAGE_TAG="${tag#v}"; else IMAGE_TAG="$tag"; fi
+  case "$tag" in
+    v[0-9]*) IMAGE_TAG="${tag#v}" ;;
+    *)       IMAGE_TAG="$tag" ;;
+  esac
   # latest 只跟随 CalVer 发布；非 CalVer tag 仍构建出版本 tag（可端到端演练），但不碰 latest
-  if ! [[ "$tag" =~ ^v[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]]; then
+  if ! printf '%s' "$tag" | grep -qE '^v[0-9]{4}\.[0-9]{1,2}\.[0-9]+$'; then
     PUSH_LATEST=false
     echo "注意：${tag} 非 CalVer 格式，仅推送版本 tag，不更新 latest"
   fi
@@ -129,10 +145,12 @@ build_image() {
     echo "SKIP_BUILD=true（tag 附注 cnb-image: skip）：跳过构建"
     return 0
   fi
-  if [[ "$PLATFORMS" == *","* ]]; then
-    echo "build 仅支持单平台（PLATFORMS=${PLATFORMS}）；多平台构建请用 release" >&2
-    exit 2
-  fi
+  case "$PLATFORMS" in
+    *,*)
+      echo "build 仅支持单平台（PLATFORMS=${PLATFORMS}）；多平台构建请用 release" >&2
+      exit 2
+      ;;
+  esac
   echo "构建 ${IMAGE}"
   # --provenance=false 避免导出 attestation manifest list（部分 registry 拉取不兼容）
   docker build \
@@ -188,13 +206,14 @@ setup_qemu() {
   fi
 }
 
-# 构建推送本体（用当前 buildx 选中的 builder；由 release 的三级回退逐级调用）
+# 构建推送本体（用当前 buildx 选中的 builder；由 release 的三级回退逐级调用）。
+# 镜像 tag 参数经位置参数传入（POSIX sh 没有数组；-t 后跟镜像引用，不含空格）
 build_and_push() {
   docker buildx build \
     --platform "$PLATFORMS" \
     --provenance=false \
     -f "$DOCKERFILE" \
-    "${tags[@]}" \
+    "$@" \
     --push \
     "$CONTEXT"
 }
@@ -208,21 +227,22 @@ release() {
     echo "release 必须推送（PUSH_IMAGE=${PUSH_IMAGE}）；仅本地构建请用 build" >&2
     exit 1
   fi
-  local tags=(-t "$IMAGE")
-  if [ "$PUSH_LATEST" = "true" ]; then tags+=(-t "$LATEST"); fi
+  # POSIX sh 没有数组，tag 参数按位置参数拼（-t 后跟镜像引用，路径不会含空格）
+  set -- -t "$IMAGE"
+  if [ "$PUSH_LATEST" = "true" ]; then set -- "$@" -t "$LATEST"; fi
   echo "构建并推送：${PLATFORMS} → ${IMAGE}"
 
   # 三级回退（与 CLAUDE.md「镜像为多平台 manifest」策略一致）：
   #   ① 平台自带能力：官方文档称 services: docker 后 docker buildx 开箱即用
   #   ② 默认 builder 不行时自建 docker-container builder（多平台导出的硬要求）
   #   ③ 仍失败（多为缺 arm64 模拟）时注册 binfmt/qemu 后重试
-  if ! build_and_push; then
+  if ! build_and_push "$@"; then
     echo "回退②：默认 builder 构建失败，自建 docker-container builder 重试" >&2
     ensure_builder
-    if ! build_and_push; then
+    if ! build_and_push "$@"; then
       echo "回退③：仍失败，注册 qemu/binfmt 模拟器后重试" >&2
       setup_qemu
-      build_and_push
+      build_and_push "$@"
     fi
   fi
 

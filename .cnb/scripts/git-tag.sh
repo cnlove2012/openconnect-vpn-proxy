@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # CNB 流水线：把本次构建的 CalVer 版本打成 git tag 并推送到远端
 #
 # 用法：git-tag.sh
@@ -13,7 +13,8 @@
 #                仅手动场景使用（云原生开发/本地），发布按钮已不提供该开关
 #   NO_LATEST   "true" 时 tag 附注写入 cnb-latest: skip（tag_push 管线据此不更新 latest）
 #   （NO_LATEST 由 .cnb/web_trigger.yml 按钮注入；不传 = 默认 build+latest）
-set -euo pipefail
+# 刻意写成 POSIX sh：跑在 docker:*-cli（Alpine，无 bash）里，须 `sh` 调用、不用 bash 扩展
+set -eu
 
 STATE_FILE="${CNB_BUILD_WORKSPACE:-.}/.cnb-image.env"
 [ -f "$STATE_FILE" ] || { echo "缺少 ${STATE_FILE}，请先执行 docker-build.sh resolve-tag" >&2; exit 1; }

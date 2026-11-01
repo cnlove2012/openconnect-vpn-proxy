@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # CalVer 版本计算：年.周.build（ISO 周，UTC）
 #
 # 用法：
@@ -11,7 +11,10 @@
 #                  不传则按当天「年.周」取已有 tag 的最大 build + 1
 #
 # 版本来源：git tag（CI 下先 fetch，见 fetch_tags），无需额外状态文件
-set -euo pipefail
+#
+# 刻意写成 POSIX sh：本脚本在 docker:*-cli 镜像里运行，该镜像基于 Alpine、不含 bash，
+# `bash script.sh` 会直接 127（sh: bash: not found）。故不用 [[ ]]、local、数组、<<< 等扩展
+set -eu
 
 PREFIX="${CALVER_PREFIX:-v}"
 
@@ -34,12 +37,7 @@ current_yyww() {
 
 # 列出 年.周（$1）下已发布的 build 号
 builds_of() {
-  local yyww="${1//./\\.}" tag
-  while IFS= read -r tag; do
-    if [[ "$tag" =~ ^v${yyww}\.([0-9]+)$ ]]; then
-      echo "${BASH_REMATCH[1]}"
-    fi
-  done < <(git tag -l "v${1}.*")
+  git tag -l "v$1.*" | sed -n "s/^v$1\.\([0-9][0-9]*\)$/\1/p"
 }
 
 latest_build() {
@@ -49,13 +47,16 @@ latest_build() {
 next_version() {
   fetch_tags
   # 指定基准版本时只自增 build 号：周号一旦发布过就固定，不跟着当天日期跑
-  local yyww="${BASE_VERSION:-$(current_yyww)}"
+  yyww="${BASE_VERSION:-$(current_yyww)}"
   # BASE_VERSION 是手填值，脏输入（带空格、"v2026.44"、写成完整版本号）直接拦下：
   # 放过去会产出 "2026.44 .1" 这种镜像引用，报错要拖到 docker build 才出现
-  if ! [[ "$yyww" =~ ^[0-9]{4}\.[0-9]{1,2}$ ]]; then
-    echo "错误：BASE_VERSION=\"${yyww}\" 不是 年.周 格式（如 2026.44）" >&2
-    exit 1
-  fi
+  case "$yyww" in
+    [0-9][0-9][0-9][0-9].[0-9]|[0-9][0-9][0-9][0-9].[0-9][0-9]) ;;
+    *)
+      echo "错误：BASE_VERSION=\"${yyww}\" 不是 年.周 格式（如 2026.44）" >&2
+      exit 1
+      ;;
+  esac
   echo "${yyww}.$(( $(latest_build "$yyww" || true) + 0 + 1 ))"
 }
 
