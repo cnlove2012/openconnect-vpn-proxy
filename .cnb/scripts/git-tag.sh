@@ -55,8 +55,10 @@ fi
 # 3. 打附注 tag 并推送。message 里带上构建上下文，
 #    方便在 Tag 列表页直接点回对应流水线；
 #    末尾两行机器可读标记由 tag_push 管线的 from-tag 解析（开关随 tag 传递）
-git config user.name "cnb"
-git config user.email "cnb@cnb.cool"
+# --local 显式钉住写仓库级配置：不带级别选项时默认也是写 .git/config（不会碰
+# ~/.gitconfig；在仓库外运行则直接 fatal），写明是为免歧义、防误改成 --global
+git config --local user.name "cnb"
+git config --local user.email "cnb@cnb.cool"
 
 git tag -a "$GIT_TAG" \
   -m "Release ${GIT_TAG}

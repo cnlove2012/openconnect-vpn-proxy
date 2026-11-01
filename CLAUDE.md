@@ -45,6 +45,8 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 - tag 附注解析（`from-tag`）用 `sed` 而非 `grep | awk`：管道里的外部程序会把 `$` 再展开一次，而附注里就写着 `- 提交：${CNB_COMMIT}`——`CNB_COMMIT` 在 fork 出来的仓库里可控，提交内容带换行 + 标记样的一行就能伪造 `cnb-image: skip` 静默跳过发布。
 - `.cnb/scripts/` 脚本一律 `sh` 调用、且必须保持 POSIX sh 语法：`tag_push` 的 `docker.image: docker:28-cli` 基于 Alpine，**没有 bash**（写 `bash xxx.sh` 会 `sh: bash: not found`、退出码 127），`[[ ]]`、`local`、数组、`<<<`、`=~` 都不能用（构建 `cnb-t83-1k6aq9lh5` 曾因此 127，见 auto/ci-sh-15fb / #3）。
 - 不换 Debian 系镜像的原因：官方 `docker` 镜像里 Debian 系的只有 `28-dind`，它自带 dockerd，会与 `services: [docker]` 的 daemon 打架；`-cli` 线只有 Alpine。想用 bash 只有两条路——`apk add --no-cache bash`，或自建镜像。当前三个脚本只用到 git/printf/sed/grep/tr/date 等基础工具，不值得为此加依赖。
+- tag 名宽松度（`from-tag`）：允许的主体是 `[A-Za-z0-9._-]{0,100}`，即 `v` 本身（剥完为空）也放行——与 POSIX 化之前的正则 `^v?[...]{1,100}$` 等价。`case` 里必须写 `v|v?*` 两个分支，只写 `v*` 会让 `v` 被拒（单一 `v` 是合法 git tag 名）。
+- `git-tag.sh` 里的 `git config` 一律带 `--local`：不带级别选项时默认也是写仓库级 `.git/config`（不会碰全局 `~/.gitconfig`，仓库外运行则直接 fatal）——显式写明是防歧义、防误改成 `--global`，并非修复什么全局污染。
 - stage 间传值：`exports:` 从 stage 的 `exports`/`result` 对象取（脚本内用 `##[set-output k=v]` 输出）；CNB 环境变量无法从子进程回传，跨 stage 大块数据用落盘文件（见 docker-build.sh 的 `.cnb-image.env`）。
 
 ### 参考文档（markdown 直链，可整篇抓取）

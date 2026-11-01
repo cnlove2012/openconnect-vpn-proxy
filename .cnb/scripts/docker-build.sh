@@ -71,13 +71,14 @@ from_tag() {
   : "${CNB_BRANCH:?from-tag 需在 tag_push 事件下运行（CNB_BRANCH=tag 名）}"
   tag="$CNB_BRANCH" msg="" image_marker="" latest_marker=""
   # tag 名会被拼进镜像引用，先收口字符集，防 `]` / 空格之类把 tag 参数顶出去
+  # 只剥一个 v：v2026.44.1 → 2026.44.1；v 本身（主体为空）也是合法 tag 名，不剥
   case "$tag" in
-    v*) tag_body="${tag#v}" ;;
-    *)  tag_body="$tag" ;;
+    v|v?*) tag_body="${tag#v}" ;;
+    *)     tag_body="$tag" ;;
   esac
-  # 长度与字符集一起校验：只允许 v?[A-Za-z0-9._-]{1,100}
+  # 字符集校验：只允许 v?[A-Za-z0-9._-]{0,100}（v 剥完可为空，其余主体至少 1 字符）
   case "$tag_body" in
-    ""|*[!A-Za-z0-9._-]*)
+    *[!A-Za-z0-9._-]*)
       echo "错误：tag 名 ${tag} 含非法字符，拒绝构建" >&2
       exit 1
       ;;
