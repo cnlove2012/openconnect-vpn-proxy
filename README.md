@@ -191,29 +191,17 @@ docker compose build vpn-proxy
 
 ### 5.3 先启动 VPN 容器
 
-建议先只启动 VPN，等人工认证成功后再启动业务应用：
+建议先只启动 VPN，等人工认证成功后再启动业务应用。启动并立即进入交互终端：
 
 ```bash
-docker compose up -d vpn-proxy
+docker compose up -d vpn-proxy && docker attach vpn-proxy
 ```
 
-进入交互终端：
-
-```bash
-docker attach vpn-proxy
-```
+用 `&&` 连成一条是有意的：`up -d` 是后台启动，密码提交、OTP 提示这些输出可能在执行 `docker attach` 之前就已经打印，而 attach 只显示之后的新输出、不回放历史——分开执行容易 attach 进去一片黑。紧跟执行才能从头看到认证过程；`up -d` 失败（如 `.env` 缺变量）时也不会进入无意义的 attach。容器已在运行且配置未变时 `up -d` 是空操作，这条命令可以当作每次进入 OTP 交互的固定入口。
 
 Expect 会自动提交 `.env` 中的 VPN 密码；看到短信验证码提示后，在终端输入手机上的六位验证码。
 
-> **attach 后没有任何输出（黑屏）不代表启动失败**。`up -d` 是后台启动，密码提交、OTP 提示这些输出可能在执行 `docker attach` 之前就已经打印；attach 只显示之后的新输出，不会回放历史。此时容器大概率正在等你输入验证码——直接输入手机上的六位验证码回车即可。
->
-> 不确定容器当前处于什么状态时，先看已产生的日志再操作：
->
-> ```bash
-> docker logs vpn-proxy
-> ```
->
-> 日志里出现 `Please input SMS Code:` 说明正在等验证码（attach 后直接输入即可）；日志里是报错才是真的启动失败。
+> 如果是先 `up -d`、隔了一段时间才 attach，黑屏不代表启动失败——容器大概率正在等验证码，直接输入六位验证码回车即可。不确定容器当前状态时，先看已产生的日志：`docker logs vpn-proxy` 里出现 `Please input SMS Code:` 就是在等验证码；是报错才是真的启动失败。
 
 认证成功时重点观察：
 
@@ -619,11 +607,8 @@ devices:
 # 构建 VPN 代理镜像
 docker compose build vpn-proxy
 
-# 只启动 VPN 代理
-docker compose up -d vpn-proxy
-
-# 进入 OTP 交互
-docker attach vpn-proxy
+# 启动 VPN 代理并进入 OTP 交互（一条命令执行，避免错过认证提示，见 5.3）
+docker compose up -d vpn-proxy && docker attach vpn-proxy
 
 # 查看状态
 docker compose ps

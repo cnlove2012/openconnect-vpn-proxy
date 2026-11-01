@@ -60,7 +60,7 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 
 ## 本地开发
 
-- 本地跑容器：`docker compose up -d vpn-proxy` → `docker attach vpn-proxy` 输入短信验证码 → `Ctrl+P`/`Ctrl+Q` 退出（`Ctrl+C` 会杀隧道）
+- 本地跑容器：`docker compose up -d vpn-proxy && docker attach vpn-proxy`（一条命令执行；分开执行会错过认证提示、attach 进去黑屏，实际在等短信验证码）→ 输入验证码 → `Ctrl+P`/`Ctrl+Q` 退出（`Ctrl+C` 会杀隧道）
 - `calver.sh` 本地可直接执行（`CNB_BRANCH` 为空时自动跳过 fetch tags）：`sh .cnb/scripts/calver.sh next`
 - 本地验多平台构建：起 `registry:2` 容器 + `docker buildx create --driver docker-container --config`（registry 配 http=true），再 `CNB_DOCKER_REGISTRY=host.docker.internal:5000 IMAGE_REPO=x IMAGE_TAG=y sh .cnb/scripts/docker-build.sh release`，`docker manifest inspect --insecure` 验双架构
 - 本地同步 Docker Hub：`./docker-build-push.sh --tag` 先比对 git 最新 tag 与 Docker Hub 最新版本 tag，再 `./docker-build-push.sh` 发布（同号镜像 tag + latest）；Docker Hub 侧读 `hub.docker.com/v2` 公开 API，无需认证。本地脚本用 bash（`#!/usr/bin/env bash`、`set -euo pipefail`）；必须保持 POSIX sh 的只有 CI 侧 `.cnb/scripts/`（docker:28-cli 无 bash），两边约束不同、别互相照搬
