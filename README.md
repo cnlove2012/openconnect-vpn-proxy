@@ -2,17 +2,17 @@
 
 ## 1. 项目背景与目标
 
-客户测试环境的认证/业务服务部署在客户自己的内网中。我们的 Swoft 服务在测试环境运行，需要访问客户内网 API，以刷新客户侧的 `auth_token`（以下统一称为客户 Token）。
+客户测试环境的认证/业务服务部署在客户自己的内网中。我们的业务应用——PHP、Go、Java 或其他任意语言的 Docker 容器——需要访问客户内网 API，典型场景如刷新客户侧的 `auth_token`（以下统一称为客户 Token）。
 
-客户员工通常通过 **Cisco Secure Client**（AnyConnect）连接内网；但当前测试环境是 **Linux + Docker**，无法安装和管理客户指定的 VPN 客户端。因此，本项目使用 **OpenConnect + Docker** 建立 **Cisco AnyConnect** 兼容 VPN 连接，并在 VPN 容器内运行 **Tinyproxy**，向 Swoft 提供 HTTP/HTTPS 正向代理。
+客户员工通常通过 **Cisco Secure Client**（AnyConnect）连接内网；但业务容器里无法安装和管理客户指定的 VPN 客户端。因此，本项目使用 **OpenConnect + Docker** 建立 **Cisco AnyConnect** 兼容 VPN 连接，并在 VPN 容器内运行 **Tinyproxy**，向同网络的业务容器提供 HTTP/HTTPS 正向代理。
 
-目标不是把整个测试服务器接入客户 VPN，而是让 Swoft 对指定客户内网 API 的 HTTP 请求显式使用代理：
+目标不是把整个测试服务器接入客户 VPN，而是让业务应用对指定客户内网 API 的 HTTP 请求显式使用代理：
 
 ```text
-Swoft  --HTTP proxy-->  Tinyproxy  --VPN/TUN-->  客户内网 API
+业务容器(PHP/Go/Java/...)  --HTTP proxy-->  Tinyproxy  --VPN/TUN-->  客户内网 API
 ```
 
-这样可以把 VPN 接入能力作为独立基础设施容器运行。业务代码只需要在访问客户内网 API 时指定 `CUSTOMER_PROXY`，不需要在 Swoft 镜像内安装 OpenConnect，也不需要改变业务容器的默认路由。
+这样可以把 VPN 接入能力作为独立基础设施容器运行。业务代码只需要在访问客户内网 API 时指定 `CUSTOMER_PROXY`，不需要在业务镜像内安装 OpenConnect，也不需要改变业务容器的默认路由。
 
 > **范围说明**：本项目实现的是 HTTP/HTTPS 正向代理，不是通用 SOCKS 代理，也不会让测试服务器或所有容器的任意网络流量自动进入客户 VPN。它适合通过 HTTP/HTTPS API 刷新 Token 的场景。
 
@@ -88,9 +88,9 @@ DefaultWEBVPNGroup => duanxin
 
 ## 3. 架构
 
-### 3.1 单 Compose：Swoft 与 VPN 代理在同一个 Docker 网络
+### 3.1 单 Compose：业务容器与 VPN 代理在同一个 Docker 网络
 
-> 本仓库的 `docker-compose.yaml` 只包含 `vpn-proxy` 服务；下图是目标形态——Swoft（业务容器）由业务侧项目提供，并加入同一个 Docker 网络。
+> 本仓库的 `docker-compose.yaml` 只包含 `vpn-proxy` 服务；下图是目标形态——业务容器 `app`（任意语言）由业务侧项目提供，并加入同一个 Docker 网络。
 
 ```text
                          Docker Host (Linux test server)
@@ -99,7 +99,7 @@ DefaultWEBVPNGroup => duanxin
 │  app-net                 vpn-proxy-net                           │
 │  ┌──────────────┐        ┌──────────────────────────────────┐     │
 │  │              │        │                                  │     │
-│  │    Swoft     ├────────┤  vpn-proxy                        │     │
+│  │     app      ├────────┤  vpn-proxy                        │     │
 │  │              │  HTTP  │  ┌──────────────┐                  │     │
 │  │ CUSTOMER_    │ proxy  │  │ Tinyproxy    │ :8888            │     │
 │  │ PROXY         ├────────►  └──────┬───────┘                  │     │
@@ -115,10 +115,10 @@ DefaultWEBVPNGroup => duanxin
                            客户 VPN Gateway
                                      │
                                      ▼
-                           客户内网 Token API
+                           客户内网 API
 ```
 
-关键原则：**Swoft 与 VPN 代理必须加入同一个 Docker 用户自定义网络。业务容器通过 Docker DNS 和容器名访问代理，不走宿主机端口。**
+关键原则：**业务容器与 VPN 代理必须加入同一个 Docker 用户自定义网络。业务容器通过 Docker DNS 和容器名访问代理，不走宿主机端口。**
 
 容器内代理地址：
 
@@ -138,9 +138,9 @@ http://vpn-proxy:8888
 | `vpn-proxy` | 容器化运行 OpenConnect 与 Tinyproxy |
 | OpenConnect | 连接客户 Cisco AnyConnect 兼容 VPN，创建 `tun0` 并配置路由 |
 | Tinyproxy | 提供 HTTP/HTTPS 正向代理，监听容器内 `8888` |
-| `swoft` | 访问客户内网 Token API，并在请求级别指定代理 |
+| `app`（业务容器） | 任意语言的业务应用（PHP / Go / Java / …）：访问客户内网 API，并在请求级别指定代理 |
 | `vpn-proxy-net` | 只连接需要访问 VPN 代理的业务容器 |
-| `app-net` | Swoft 与其普通业务依赖使用的网络，可按现有项目扩展 |
+| `app-net` | 业务应用与其普通业务依赖使用的网络，可按现有项目扩展 |
 
 ## 4. 目录结构
 
@@ -191,7 +191,7 @@ docker compose build vpn-proxy
 
 ### 5.3 先启动 VPN 容器
 
-建议先只启动 VPN，等人工认证成功后再启动 Swoft：
+建议先只启动 VPN，等人工认证成功后再启动业务应用：
 
 ```bash
 docker compose up -d vpn-proxy
@@ -248,16 +248,16 @@ docker exec vpn-proxy tail -f /tmp/tinyproxy.log
 
 Compose healthcheck 只检查 `tun0` 是否获得 IPv4 地址，不代表客户 API、端口或 DNS 一定可达。
 
-### 5.5 启动 Swoft（业务侧项目）
+### 5.5 启动业务应用（业务侧项目）
 
-VPN 认证成功后，在 **Swoft 所在的业务 Compose 项目**中启动（本仓库的 compose 文件里没有 `swoft` 服务，`docker compose up -d swoft` 在本仓库目录下执行会报「no such service」）：
+VPN 认证成功后，在 **业务应用所在的 Compose 项目**中启动（本仓库的 compose 文件里没有业务服务，`docker compose up -d <业务服务名>` 在本仓库目录下执行会报「no such service」）：
 
 ```bash
 # 在业务侧 Compose 项目目录执行
-docker compose up -d swoft
+docker compose up -d <业务服务名>
 ```
 
-Swoft 容器需要注入：
+业务容器需要注入：
 
 ```text
 CUSTOMER_PROXY=http://vpn-proxy:8888
@@ -265,7 +265,7 @@ CUSTOMER_PROXY=http://vpn-proxy:8888
 
 ## 6. Compose 关键配置
 
-项目根目录的 `docker-compose.yaml` **只包含 `vpn-proxy` 一个服务**；Swoft 服务在业务侧项目中配置（见第 9、10 节）。关键配置如下：
+项目根目录的 `docker-compose.yaml` **只包含 `vpn-proxy` 一个服务**；业务服务在业务侧项目中配置（见第 9、10 节）。关键配置如下：
 
 ```yaml
 services:
@@ -324,16 +324,18 @@ networks:
 ### Mac 与 Linux 的 ports 差异
 
 - **Mac Docker Desktop 本机手动 curl**：保留 `127.0.0.1:8888:8888`，在 Mac 上访问 `http://127.0.0.1:8888`。
-- **Linux 测试服务器**：删除整个 `ports:` 块。Swoft 通过 `vpn-proxy-net` 使用 `http://vpn-proxy:8888`，不需要开放宿主机端口。
+- **Linux 测试服务器**：删除整个 `ports:` 块。业务容器通过 `vpn-proxy-net` 使用 `http://vpn-proxy:8888`，不需要开放宿主机端口。
 - 不要使用 `0.0.0.0:8888:8888` 或 `8888:8888` 将无认证代理公开到服务器网卡或公网。
 
-## 7. Swoft 如何通过代理刷新客户 Token
+## 7. 业务应用如何通过代理访问客户内网 API
+
+以下以「刷新客户 Token」为典型场景，示例覆盖 PHP / Go / Java；其他语言同理，找到 HTTP 客户端的代理设置项即可。
 
 ### 7.1 推荐：只对客户域名的请求设置代理
 
-不要给整个 Swoft 容器设置全局 `HTTP_PROXY` / `HTTPS_PROXY`，否则 Swoft 访问其他内部服务时也可能被导向客户 VPN。
+不要给整个业务容器设置全局 `HTTP_PROXY` / `HTTPS_PROXY`，否则业务应用访问其他内部服务时也可能被导向客户 VPN。
 
-推荐在调用客户 Token API 时显式设置 `CUSTOMER_PROXY`。
+推荐在调用客户内网 API 时通过 `CUSTOMER_PROXY` 显式指定代理（示例统一用这个变量名，业务侧可自行命名）。
 
 ### 7.2 PHP cURL 示例
 
@@ -416,7 +418,7 @@ CURLOPT_PROXYTYPE => CURLPROXY_HTTP,
 
 ### 7.3 Guzzle 示例
 
-如果 Swoft 项目使用 Guzzle：
+如果 PHP 项目使用 Guzzle：
 
 ```php
 $client = new \GuzzleHttp\Client([
@@ -435,30 +437,76 @@ $response = $client->post(getenv('CUSTOMER_TOKEN_URL'), [
 
 请求格式仍需按客户 API 契约调整。
 
-### 7.4 Swoole 协程 HTTP Client 注意事项
+### 7.4 Go 示例
+
+`net/http` 在 `http.Transport` 上指定代理（按 client 实例生效，不污染全局）：
+
+```go
+proxyURL, err := url.Parse(os.Getenv("CUSTOMER_PROXY"))
+if err != nil {
+    log.Fatal(err)
+}
+
+client := &http.Client{
+    Transport: &http.Transport{
+        Proxy: http.ProxyURL(proxyURL),
+    },
+    Timeout: 20 * time.Second,
+}
+
+resp, err := client.Post(os.Getenv("CUSTOMER_TOKEN_URL"),
+    "application/json",
+    strings.NewReader(`{"refresh_token":"..."}`))
+```
+
+不要用 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量 + `http.ProxyFromEnvironment` 的组合给整个进程开全局代理，原因同 7.1。
+
+### 7.5 Java 示例
+
+Java 11+ 自带的 `java.net.http.HttpClient`：
+
+```java
+// 代理地址来自 CUSTOMER_PROXY（示例按 vpn-proxy:8888 解析 host/port）
+var client = HttpClient.newBuilder()
+        .proxy(ProxySelector.of(new InetSocketAddress("vpn-proxy", 8888)))
+        .connectTimeout(Duration.ofSeconds(5))
+        .build();
+
+var request = HttpRequest.newBuilder(URI.create(tokenUrl))
+        .timeout(Duration.ofSeconds(20))
+        .header("Content-Type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString("{\"refresh_token\":\"...\"}"))
+        .build();
+
+HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+```
+
+如果项目还在用 Apache HttpClient 4.x/5.x，等价做法是设置 `HttpHost proxy = new HttpHost("vpn-proxy", 8888)` 与 `RequestConfig.Builder.setProxy(proxy)`。
+
+### 7.6 Swoole 协程 HTTP Client 注意事项（PHP）
 
 不同 Swoole 版本和客户端类的代理配置能力并不完全相同。若使用 `Swoole\\Coroutine\\Http\\Client`，必须先按项目实际 Swoole 版本核对 `http_proxy_host` / `http_proxy_port` 是否受支持，并在容器中实测；不要仅因为设置了环境变量 `CUSTOMER_PROXY` 就假设协程客户端会自动使用代理。
 
 对当前 Demo，建议先用显式 `CURLOPT_PROXY` 的 PHP cURL 或经过验证的 Guzzle 配置跑通链路。
 
-## 8. Swoft 容器内验证代理
+## 8. 业务容器内验证代理
 
-先确认 Swoft 与代理容器在同一网络：
+先确认业务容器与代理容器在同一网络：
 
 ```bash
-docker exec swoft getent hosts vpn-proxy
+docker exec <业务容器> getent hosts vpn-proxy
 ```
 
-从 Swoft 容器测试客户 API：
+从业务容器测试客户 API：
 
 ```bash
-docker exec swoft \
+docker exec <业务容器> \
   curl -v \
   -x http://vpn-proxy:8888 \
   https://客户内网域名/health
 ```
 
-如果 Swoft 镜像没有 `curl`，可以临时使用带 curl 的诊断容器，并将它接入同一个 Docker 网络；也可以直接使用 Swoft 的 PHP cURL 测试代码。
+如果业务镜像没有 `curl`，可以临时使用带 curl 的诊断容器，并将它接入同一个 Docker 网络；也可以直接在业务应用里跑一段代理请求测试代码（见第 7 节各语言示例）。
 
 同时在代理容器观察 Tinyproxy 日志：
 
@@ -468,14 +516,14 @@ docker exec vpn-proxy tail -f /tmp/tinyproxy.log
 
 排查判断：
 
-- **Tinyproxy 日志没有请求**：Swoft 到代理的网络/DNS/地址有问题；检查两个容器是否在同一 `vpn-proxy-net`、代理地址是否写成 `vpn-proxy:8888`。
-- **日志有请求，但返回 502/超时**：Swoft 已经到达代理，继续检查 VPN 是否已认证、客户目标路由、内部 DNS、目标端口和客户防火墙。
-- **通过 IP 成功，域名失败**：检查客户 VPN 下发的内部 DNS。通过 HTTP 代理访问域名时，通常由代理端解析目标域名；不要在 Swoft 代码里提前将客户内网域名解析成错误的公网 IP。
+- **Tinyproxy 日志没有请求**：业务容器到代理的网络/DNS/地址有问题；检查两个容器是否在同一 `vpn-proxy-net`、代理地址是否写成 `vpn-proxy:8888`。
+- **日志有请求，但返回 502/超时**：业务容器已经到达代理，继续检查 VPN 是否已认证、客户目标路由、内部 DNS、目标端口和客户防火墙。
+- **通过 IP 成功，域名失败**：检查客户 VPN 下发的内部 DNS。通过 HTTP 代理访问域名时，通常由代理端解析目标域名；不要在业务代码里提前将客户内网域名解析成错误的公网 IP。
 - **HTTP CONNECT 成功但 TLS 失败**：检查目标服务证书链和客户内部 CA。
 
 ## 9. 两个 Compose 项目分开部署
 
-如果 VPN 代理和 Swoft 不在同一个 Compose 项目中，需要预先建立一个共享 Docker 网络。
+如果 VPN 代理和业务应用不在同一个 Compose 项目中，需要预先建立一个共享 Docker 网络。
 
 ### 9.1 只创建一次共享网络
 
@@ -503,12 +551,12 @@ networks:
     name: vpn-proxy-net
 ```
 
-### 9.3 Swoft Compose
+### 9.3 业务应用 Compose（示例）
 
 ```yaml
 services:
-  swoft:
-    image: ${SWOFT_IMAGE}
+  app:
+    image: ${APP_IMAGE}
     environment:
       CUSTOMER_PROXY: http://vpn-proxy:8888
     networks:
@@ -521,7 +569,7 @@ networks:
     name: vpn-proxy-net
 ```
 
-分开 Compose 时，不能通过 `depends_on` 引用另一个 Compose 项目中的服务。Swoft 应用需要对 VPN 尚未连接/代理暂不可用的情况做重试或明确报错。
+分开 Compose 时，不能通过 `depends_on` 引用另一个 Compose 项目中的服务。业务应用需要对 VPN 尚未连接/代理暂不可用的情况做重试或明确报错。
 
 ## 10. 将 `vpn-proxy` 复制到 Linux 测试环境
 
@@ -529,11 +577,11 @@ networks:
 
 1. 将主 `compose.yaml` 中的 `vpn-proxy` 服务段复制到测试环境的 Compose 文件。
 2. 同时复制 `docker/` 构建目录，或使用已构建并推送到镜像仓库的 `cnlove2012/openconnect-vpn-proxy` 镜像。
-3. 将 Swoft 服务加入同一个 `vpn-proxy-net`。
-4. 为 Swoft 设置 `CUSTOMER_PROXY=http://vpn-proxy:8888`。
+3. 将业务服务加入同一个 `vpn-proxy-net`。
+4. 为业务服务设置 `CUSTOMER_PROXY=http://vpn-proxy:8888`。
 5. Linux 测试服务器上删除 VPN 服务的 `ports:` 块，不发布 `8888` 到宿主机。
 6. 设置服务器本地 `.env` 或 Docker Secrets，完成 VPN 用户名和密码配置。
-7. 先启动并人工完成 VPN OTP 认证，再启动/调用 Swoft Token 刷新流程。
+7. 先启动并人工完成 VPN OTP 认证，再启动/调用需要访问客户内网的业务流程。
 
 Linux 环境的 VPN 服务至少需要：
 
@@ -549,11 +597,11 @@ devices:
 ## 11. 启动顺序、可用性与重连
 
 - `depends_on` 只保证服务启动顺序，不代表人工输入 OTP 已完成，也不代表 VPN 内网路由或客户 API 已经可用。
-- 本项目建议先执行 `docker compose up -d vpn-proxy`，然后 `docker attach vpn-proxy` 完成认证，确认 TUN 与路由正常后再启动 Swoft。
+- 本项目建议先执行 `docker compose up -d vpn-proxy`，然后 `docker attach vpn-proxy` 完成认证，确认 TUN 与路由正常后再启动业务应用。
 - `docker stop` 停止容器时，Compose（`init: true` + `stop_grace_period: 15s`）先把 SIGTERM 发给 PID 1；Expect 脚本里的 trap 会把信号转发给 OpenConnect 子进程并等待其退出，从而优雅拆除隧道，而不是硬杀进程留下半开连接。
 - `--reconnect-timeout=300`（可用 `VPN_RECONNECT_TIMEOUT` 覆盖）用于 OpenConnect 进程存活期间尝试恢复短暂网络中断；不代表容器被删除或进程退出后可以免 OTP 恢复。
 - VPN 会话过期、服务端撤销会话、容器重建或宿主机重启后，通常需要重新启动容器并输入密码及短信验证码。
-- Swoft 的 Token 刷新逻辑应设置连接超时、总超时、有限次数重试和退避策略。VPN 不可用时应返回可观测的依赖故障，不要无限重试客户接口。
+- 业务侧访问客户内网 API 的逻辑（如 Token 刷新）应设置连接超时、总超时、有限次数重试和退避策略。VPN 不可用时应返回可观测的依赖故障，不要无限重试客户接口。
 
 ## 12. 常用命令
 
@@ -580,8 +628,8 @@ docker exec vpn-proxy tail -f /tmp/tinyproxy.log
 docker exec vpn-proxy ip addr show tun0
 docker exec vpn-proxy ip route
 
-# VPN 认证成功后启动 Swoft
-docker compose up -d swoft
+# VPN 认证成功后启动业务应用（在业务侧 Compose 项目执行）
+docker compose up -d <业务服务名>
 
 # 停止并删除容器（下次启动需要重新认证）
 docker compose down
@@ -648,15 +696,15 @@ Tinyproxy 会降权到 `nobody` 用户。当前配置将日志写入 `/tmp/tinyp
 
 当前为了先保证 CSTP/SSL 通道可用，使用 `--no-dtls`。待确认 Linux 测试环境的 UDP/DTLS 路径后，再决定是否移除该参数。
 
-### 13.5 Swoft 请求失败，但 Mac 上 curl 成功
+### 13.5 业务容器请求失败，但 Mac 上 curl 成功
 
-Mac 的 `127.0.0.1:8888` 是宿主机发布端口；Swoft 容器不能把自己的 `127.0.0.1` 当作代理地址。Swoft 必须使用 Docker 网络地址：
+Mac 的 `127.0.0.1:8888` 是宿主机发布端口；业务容器不能把自己的 `127.0.0.1` 当作代理地址。业务容器必须使用 Docker 网络地址：
 
 ```text
 http://vpn-proxy:8888
 ```
 
-同时确认 Swoft 和 VPN 代理加入了同一个 `vpn-proxy-net`。
+同时确认业务容器和 VPN 代理加入了同一个 `vpn-proxy-net`。
 
 ### 13.6 Tinyproxy 日志有请求，但客户 API 超时
 
@@ -675,4 +723,4 @@ http://vpn-proxy:8888
 
 ---
 
-**项目定位**：用于 Linux + Docker 测试环境中，通过 OpenConnect 建立客户授权的 Cisco AnyConnect 兼容 VPN，再由 Tinyproxy 向 Swoft 提供受控 HTTP/HTTPS 代理，以便调用客户内网 API 刷新 Token。当前已完成认证和 CSTP/SSL 隧道验证；Swoft 实际 Token API 的请求字段、响应结构和完整业务联调，应以客户接口文档及现有 Swoft 代码为准。
+**项目定位**：用于 Linux + Docker 测试环境中，通过 OpenConnect 建立客户授权的 Cisco AnyConnect 兼容 VPN，再由 Tinyproxy 向任意语言的业务容器（PHP / Go / Java 等）提供受控 HTTP/HTTPS 代理，以便访问客户内网 API。当前已完成认证和 CSTP/SSL 隧道验证；实际 Token API 的请求字段、响应结构和完整业务联调，应以客户接口文档及业务代码为准。

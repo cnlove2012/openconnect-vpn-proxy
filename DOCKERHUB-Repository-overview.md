@@ -95,6 +95,8 @@ http://vpn-proxy:8888
 
 - PHP cURL: `CURLOPT_PROXY` / `CURLOPT_PROXYTYPE => CURLPROXY_HTTP`
 - Guzzle: the `proxy` client option
+- Go: `http.Transport{Proxy: http.ProxyURL(...)}`
+- Java: `HttpClient.newBuilder().proxy(ProxySelector.of(...))`
 - For HTTPS targets the client issues an HTTP `CONNECT` through the proxy — keep the `https://` URL and keep TLS verification **on**.
 - Set the proxy **per request**, not as a container-wide `HTTP_PROXY`, so unrelated traffic never leaks into the VPN.
 
