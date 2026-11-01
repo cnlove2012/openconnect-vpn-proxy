@@ -14,20 +14,11 @@ branch:
             - owner
             - master
         inputs:
-          # input 名与 git-tag.sh 读取的环境变量严格一致（SKIP_IMAGE / NO_LATEST）；
-          # 默认全关 = 默认构建镜像 + 更新 latest
+          # input 名与 git-tag.sh 读取的环境变量严格一致（NO_LATEST）；
+          # 默认关 = 默认构建镜像 + 更新 latest
           - name: 发布选项
-            collapsed: true
+            collapsed: false
             inputs:
-              SKIP_IMAGE:
-                name: 跳过镜像构建（仅打 Tag）
-                type: switch
-                default: "false"
-                options:
-                  - name: 是
-                    value: "true"
-                  - name: 否
-                    value: "false"
               NO_LATEST:
                 name: 不更新 latest 镜像标签
                 type: switch

@@ -9,9 +9,10 @@
 #       令牌权限来自触发事件；web_trigger / api_trigger 属可信事件，拥有代码读写权限
 #
 # 可覆盖的环境变量：
-#   SKIP_IMAGE  "true" 时 tag 附注写入 cnb-image: skip（tag_push 管线据此跳过构建推送）
+#   SKIP_IMAGE  "true" 时 tag 附注写入 cnb-image: skip（tag_push 管线据此跳过构建推送）；
+#                仅手动场景使用（云原生开发/本地），发布按钮已不提供该开关
 #   NO_LATEST   "true" 时 tag 附注写入 cnb-latest: skip（tag_push 管线据此不更新 latest）
-#   （两开关由 .cnb/web_trigger.yml 按钮注入；auto_tag 管线不传 = 默认 build+latest）
+#   （NO_LATEST 由 .cnb/web_trigger.yml 按钮注入；不传 = 默认 build+latest）
 set -euo pipefail
 
 STATE_FILE="${CNB_BUILD_WORKSPACE:-.}/.cnb-image.env"

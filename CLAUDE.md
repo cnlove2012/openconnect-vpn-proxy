@@ -15,8 +15,8 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 
 | 文件 | 职责 |
 |---|---|
-| `.cnb.yml` | 三条流水线：`main: auto_tag`（Tag 列表页按钮→打 CalVer tag）、`main: web_trigger_release`（main 详情页按钮→同前，stages 用 YAML 锚点与 auto_tag 共用）、`"v*": tag_push`（v 开头 tag 推送→多平台构建推镜像，**唯一构建入口**，runner 钉 `cnb:arch:amd64`，`docker.image` 钉 `docker:28-cli`——缺省镜像不保证带 buildx） |
-| `.cnb/web_trigger.yml` | main 详情页「发布新版本」按钮：event=`web_trigger_release`、开关 `SKIP_IMAGE`/`NO_LATEST`（与 git-tag.sh 读的环境变量严格同名）、权限 owner/master |
+| `.cnb.yml` | 三条流水线：`main: auto_tag`（Tag 列表页按钮→打 CalVer tag）、`main: web_trigger_release`（main 详情页按钮→同前，stages 用 YAML 锚点与 auto_tag 共用）、`"v*": tag_push`（v 开头 tag 推送→多平台构建推镜像，**唯一构建入口**，runner 钉 `cnb:arch:amd64`，`docker.image` 钉 `docker:28-cli`——缺省镜像不保证带 buildx；28-cli 带 git/buildx 但不带 bash，由 stage 内 `apk add bash` 补） |
+| `.cnb/web_trigger.yml` | main 详情页「发布新版本」按钮：event=`web_trigger_release`、开关仅 `NO_LATEST`（与 git-tag.sh 读的环境变量严格同名；SKIP_IMAGE 已于 2026-11-01 从按钮移除，机制保留供手动场景）、权限 owner/master |
 | `.cnb/settings.yml` | 「push 到 main 自动打 Tag」开关（settings-tag.md，版本格式平台定）。**保留**（2026-11-01 用户裁决：避免平台侧麻烦、后续云原生开发用得上）；平台打的 tag 若 v 开头会经 `"v*"` 触发构建 |
 | `.cnb/scripts/calver.sh` | CalVer 版本计算：`年.周.build`（ISO 周 `%G.%V`，UTC；`%G` 是 ISO 周基年，跨年周不能用 `%Y`），版本来源 git tag |
 | `.cnb/scripts/docker-build.sh` | `resolve-tag \| from-tag \| build \| push \| release` 五段式；上下文 `docker/`；release 用 buildx 多平台（默认 `linux/amd64,linux/arm64`，`--provenance=false`，qemu 交叉构建）一次构建直接推 manifest；状态经 `${CNB_BUILD_WORKSPACE}/.cnb-image.env` 落盘跨 stage 共享 |
@@ -27,7 +27,7 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 - **CalVer 唯一版本源**：git tag `v年.周.build`，镜像 tag 同号去 `v`；旧 git-auto-tag 插件（SemVer）方案已废弃移除
 - **打标签与构建解耦**：auto_tag / web_trigger_release 只打 tag；镜像构建收敛在 `"v*": tag_push` 单一入口。**挂 `"v*"` glob 而非 `main`/`$` 的原因**（trigger-rule.md）：tag_push 按 tag 名匹配顶层 glob，`v2026.44.1` 匹配不到 `main`（挂 main 下永不触发）；`v*` 比 `$` 兜底更收敛——杂牌 tag 不跑构建，端到端演练也要用 v 开头的 tag
 - **镜像为多平台 manifest**（linux/amd64 + linux/arm64）：先试平台自带的多架构能力（官方文档：`services: [docker]` 后直接 `docker buildx` 即可，无需额外配置），失败才自建 docker-container builder，全部失败才尝试注册 binfmt/qemu；多平台无法先 load 再 push，故 release 子命令构建推送一体；服务器是 Ubuntu x86_64，amd64 为主要消费方
-- **「不打镜像/不打 latest」经 tag 附注传递**（推 tag 必触发 tag_push，意愿只能随 tag 走）：`cnb-image: skip` / `cnb-latest: skip`；轻量 tag（无附注）按默认 build+latest；非 CalVer tag 构建 `:tag名` 但不碰 latest
+- **「不打 latest」经 tag 附注传递**（推 tag 必触发 tag_push，意愿只能随 tag 走）：`cnb-latest: skip` 是按钮唯一开关；`cnb-image: skip`（跳过构建推送）按钮已不提供、仅手动场景可用；轻量 tag（无附注）按默认 build+latest；非 CalVer tag 构建 `:tag名` 但不碰 latest
 - **`.cnb/settings.yml` 保留**（2026-11-01 用户最终裁决）：它是「push 到 main 自动打 Tag」开关（settings-tag.md），版本格式平台定、与 CalVer 手动流程并存；后续云原生开发配置也用得上
 - `web_trigger.yml` 的 `reg` 是**正则**；`.cnb.yml` 顶层分支键是 **glob**。两者语义不同，别混用
 - 私有仓库下对 origin 的网络 git 操作（fetch/ls-remote/push）都要带 `-c http.extraHeader="Authorization: Bearer ${CNB_TOKEN}"` 内联凭据（不落盘）；裸调会以「Repository Not Found」形式失败

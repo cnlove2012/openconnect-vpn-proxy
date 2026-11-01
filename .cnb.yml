@@ -10,7 +10,7 @@
 #   - tag_push 按「tag 名」匹配顶层 glob：tag 名（如 v2026.44.1）匹配不到 main，
 #     故挂 "v*"——不用 $ 兜底且更收敛：只有 v 开头的 tag 才构建，杂牌 tag 不跑 CI
 #   - 本文件合入 main 后 ①②③ 才可用（①② 的按钮配置读默认分支的 .cnb.yml）
-#   - 推 tag 必触发 tag_push，「不打镜像 / 不打 latest」的意愿只能写入 tag 附注随 tag 传递
+#   - 推 tag 必触发 tag_push，「不打 latest」意愿只能写入 tag 附注随 tag 传递（按钮唯一开关）
 # =====================================================================
 
 main:
@@ -22,7 +22,7 @@ main:
         - name: 计算 CalVer 版本并写状态文件
           script: bash .cnb/scripts/docker-build.sh resolve-tag
         - name: 打附注 Tag 并推送
-          # ②场景下 SKIP_IMAGE/NO_LATEST 由按钮注入为环境变量，脚本转写进 tag 附注
+          # ②场景下 NO_LATEST 由按钮注入为环境变量，脚本转写进 tag 附注（SKIP_IMAGE 仅手动场景）
           script: bash .cnb/scripts/git-tag.sh
 
   # ② main 详情页「发布新版本」按钮 → 同①，开关随附注传递
@@ -38,15 +38,16 @@ main:
       runner:
         tags: cnb:arch:amd64
       # 显式声明构建容器：不写则用平台缺省镜像 cnbcool/default-build-env，
-      # 但缺省镜像不保证带 buildx（docker CLI 有了 buildx 才有多平台能力）
+      # 但缺省镜像不保证带 buildx（docker CLI 有了 buildx 才有多平台能力）。
+      # docker:28-cli 实测：带 git 与 buildx，不带 bash（Alpine）→ 各 stage 先装 bash
       docker:
         image: docker:28-cli
       services:
         - docker
       stages:
         - name: 解析 Tag 附注
-          script: bash .cnb/scripts/docker-build.sh from-tag
+          script: apk add --no-cache bash && bash .cnb/scripts/docker-build.sh from-tag
         - name: 登录制品库
           script: docker login ${CNB_DOCKER_REGISTRY} -u ${CNB_TOKEN_USER_NAME} -p ${CNB_TOKEN}
         - name: 多平台构建并推送
-          script: bash .cnb/scripts/docker-build.sh release
+          script: apk add --no-cache bash && bash .cnb/scripts/docker-build.sh release
