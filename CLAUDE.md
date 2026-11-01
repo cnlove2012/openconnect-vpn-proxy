@@ -14,7 +14,7 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 ### 配置文件清单（2026-11-01 重构后）
 
 | 文件 | 职责 |
-|---|---|
+| --- | --- |
 | `.cnb.yml` | 三条流水线：`main: auto_tag`（Tag 列表页按钮→打 CalVer tag）、`main: web_trigger_release`（main 详情页按钮→同前，stages 用 YAML 锚点与 auto_tag 共用）、`"v*": tag_push`（v 开头 tag 推送→多平台构建推镜像，**唯一构建入口**，runner 钉 `cnb:arch:amd64`，`docker.image` 钉 `docker:28-cli`——缺省镜像不保证带 buildx；该镜像 Alpine 无 bash，脚本须 `sh` 调用且保持 POSIX，见下） |
 | `.cnb/web_trigger.yml` | main 详情页「发布新版本」按钮：event=`web_trigger_release`、开关仅 `NO_LATEST`（与 git-tag.sh 读的环境变量严格同名；SKIP_IMAGE 已于 2026-11-01 从按钮移除，机制保留供手动场景）、权限 owner/master |
 | `.cnb/settings.yml` | 「push 到 main 自动打 Tag」开关（settings-tag.md，版本格式平台定）。**保留**（2026-11-01 用户裁决：避免平台侧麻烦、后续云原生开发用得上）；平台打的 tag 若 v 开头会经 `"v*"` 触发构建 |
@@ -52,11 +52,11 @@ OpenConnect（Cisco AnyConnect 兼容）VPN 容器 + Tinyproxy HTTP 正向代理
 
 ### 参考文档（markdown 直链，可整篇抓取）
 
-- 语法手册：https://docs.cnb.cool/zh/build/grammar.md
-- 触发规则（含 auto_tag）：https://docs.cnb.cool/zh/build/trigger-rule.md
-- 手动触发按钮：https://docs.cnb.cool/zh/build/web-trigger.md
-- Docker 制品库：https://docs.cnb.cool/zh/artifact/docker.md
-- 内置环境变量：https://docs.cnb.cool/zh/build/build-in-env.md
+- 语法手册：<https://docs.cnb.cool/zh/build/grammar.md>
+- 触发规则（含 auto_tag）：<https://docs.cnb.cool/zh/build/trigger-rule.md>
+- 手动触发按钮：<https://docs.cnb.cool/zh/build/web-trigger.md>
+- Docker 制品库：<https://docs.cnb.cool/zh/artifact/docker.md>
+- 内置环境变量：<https://docs.cnb.cool/zh/build/build-in-env.md>
 
 ## 本地开发
 
