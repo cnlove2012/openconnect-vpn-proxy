@@ -188,6 +188,17 @@ setup_qemu() {
   fi
 }
 
+# 构建推送本体（用当前 buildx 选中的 builder；由 release 的三级回退逐级调用）
+build_and_push() {
+  docker buildx build \
+    --platform "$PLATFORMS" \
+    --provenance=false \
+    -f "$DOCKERFILE" \
+    "${tags[@]}" \
+    --push \
+    "$CONTEXT"
+}
+
 release() {
   if [ "$SKIP_BUILD" = "true" ]; then
     echo "SKIP_BUILD=true（tag 附注 cnb-image: skip）：跳过构建与推送"
@@ -197,18 +208,24 @@ release() {
     echo "release 必须推送（PUSH_IMAGE=${PUSH_IMAGE}）；仅本地构建请用 build" >&2
     exit 1
   fi
-  setup_qemu
-  ensure_builder
   local tags=(-t "$IMAGE")
   if [ "$PUSH_LATEST" = "true" ]; then tags+=(-t "$LATEST"); fi
   echo "构建并推送：${PLATFORMS} → ${IMAGE}"
-  docker buildx build \
-    --platform "$PLATFORMS" \
-    --provenance=false \
-    -f "$DOCKERFILE" \
-    "${tags[@]}" \
-    --push \
-    "$CONTEXT"
+
+  # 三级回退（与 CLAUDE.md「镜像为多平台 manifest」策略一致）：
+  #   ① 平台自带能力：官方文档称 services: docker 后 docker buildx 开箱即用
+  #   ② 默认 builder 不行时自建 docker-container builder（多平台导出的硬要求）
+  #   ③ 仍失败（多为缺 arm64 模拟）时注册 binfmt/qemu 后重试
+  if ! build_and_push; then
+    echo "回退②：默认 builder 构建失败，自建 docker-container builder 重试" >&2
+    ensure_builder
+    if ! build_and_push; then
+      echo "回退③：仍失败，注册 qemu/binfmt 模拟器后重试" >&2
+      setup_qemu
+      build_and_push
+    fi
+  fi
+
   if [ "$PUSH_LATEST" = "true" ]; then
     echo "已推送：${IMAGE} 与 ${LATEST}（均为多平台 manifest）"
   else
